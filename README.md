@@ -11,6 +11,18 @@ Offline-first poultry-house monitoring and climate-control pilot. This is one Gi
 
 The components share one repository so changes to their interfaces can be reviewed together.
 
+## Frontend preview
+
+The initial frontend is an interactive Expo/React Native prototype with simulated farm data.
+
+```powershell
+cd frontend
+npm ci
+npm run web
+```
+
+See the [frontend guide](frontend/README.md) for the five screens, connection scenarios, checks, and backend integration work. It does not connect to real equipment yet.
+
 ## Working documents
 
 - [Current plan](docs/CURRENT_PLAN.md) — current decisions, safety boundaries, pilot gates, and open items.

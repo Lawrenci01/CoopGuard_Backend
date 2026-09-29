@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "CoopGuard",
+    "slug": "coopguard",
+    "scheme": "coopguard",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.coopguard.app"
+    },
+    "android": {
+      "package": "com.coopguard.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "CoopGuard",
+      "shortName": "CoopGuard",
+      "backgroundColor": "#F7F8F3",
+      "themeColor": "#214F3D"
+    },
+    "plugins": ["expo-font"]
+  }
+}
