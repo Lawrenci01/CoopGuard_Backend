@@ -33,6 +33,17 @@ The pilot targets one house over six months with a 3-5 person team. Broilers are
 | Optional cloud | Sync hub data to Supabase when farm internet works. Remote access shows the hub's last successful sync time. |
 | React Native app | Show five tabs: Dashboard, Alerts, Heat Map, Analytics, and Devices. Use the hub locally and Supabase remotely. Enforce roles in the API as well as the UI. |
 
+### Three separate connections and the equipment power path
+
+| Path | Used for | Internet required? |
+| --- | --- | --- |
+| Node ⇄ hub over **LoRa** | Default house telemetry, events, and hub commands | No |
+| Phone ⇄ hub over the **hub's local WiFi access point** | Live app readings, login, alerts, and local commands while on site | No; the hub creates this WiFi network even without a farm router |
+| Hub ⇄ Supabase over **farm internet**, then remote phone ⇄ Supabase | Sync, remote viewing, and remote requests | Yes |
+| **House electrical supply ⇄ fan motor** | Power that actually turns the fan | Separate from all data networks; a LoRa command or battery-powered node cannot replace it |
+
+`Offline` means **no internet is needed for the on-site system**, not that the phone talks over LoRa or that a phone outside local WiFi range has live access. The fan is existing poultry-house equipment. A commissioned node changes the fan's approved control interface while the fan's mains or verified backup circuit supplies motor power. The exact electrical interface is decided after the site survey and wiring assessment.
+
 There is no GSM/SMS channel. Remote push notifications require the farm to sync and the phone to have internet. A phone on the hub's local WiFi can receive in-app alerts without farm internet. A phone with neither hub access nor internet has only clearly marked cached data; it cannot receive live readings or execute commands.
 
 ### Retained product behavior

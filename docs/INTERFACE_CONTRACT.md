@@ -5,13 +5,14 @@ Status: planning contract, not final byte-level LoRa payload or OpenAPI schema. 
 ## Boundaries
 
 ```text
-Sensor -> node local rule -> commissioned equipment output
-       \-> LoRa report -> hub gateway -> SQLite -> hub rules/API -> local phone
-                                          \-> sync when online -> cloud -> remote phone
+House electrical supply (or verified backup) -----------------------> fan motor power
+Sensor -> node local rule -> commissioned fan-control interface ----> fan motor control
+       \-> LoRa report -> hub gateway -> SQLite -> hub rules/API --hub WiFi--> on-site phone
+                                          \-> farm internet sync -> cloud --> remote phone
 Remote phone -> cloud request -> hub validates -> LoRa command -> node validates -> output acknowledgement
 ```
 
-The first line runs without the hub. The cloud path cannot substitute for it. In a monitor-only house there is no equipment-output path.
+The node's local rule and output can run without the hub, but the fan still needs electrical power. LoRa is the default **node-to-hub** network; the phone uses the hub's local WiFi and does not connect to nodes over LoRa. The cloud path cannot substitute for local control. In a monitor-only house there is no equipment-output path.
 
 ## Messages and acknowledgements
 
