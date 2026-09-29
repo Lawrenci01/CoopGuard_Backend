@@ -1,0 +1,23 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# React Native / JavaScript
+node_modules/
+.expo/
+dist/
+build/
+
+# Embedded firmware
+.pio/
+
+# Operating system files
+.DS_Store
+Thumbs.db
