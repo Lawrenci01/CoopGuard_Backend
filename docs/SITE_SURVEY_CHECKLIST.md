@@ -40,6 +40,14 @@ For the technician and owner before installation. Record observations, photos, a
 - [ ] Phone access points in and near the house noted for later local-WiFi testing.
 - [ ] Regional LoRa frequency/power rules identified for later verification by the project team; do not choose radio settings from assumption.
 
+## AI data collection planning
+
+- [ ] Record available sensor histories, flock ages/cycles, and staff observations. Current planning assumes data must be collected.
+- [ ] Identify representative microphone locations, nearby fans/feeders, cleaning/feeding periods, and other noise sources; record how equipment settings and audio timestamps will be paired.
+- [ ] Agree who records and labels observations, owner permission, access, and retention. Initial sound labels describe usual/unusual sounds and observed context, not an assumed diagnosis.
+- [ ] Select and bench-test a short-audio collection/retrieval method separately from LoRa. Local recorder/storage hardware is not yet selected; do not assume raw audio can be sent over LoRa.
+- [ ] Plan enough recording sessions and environmental history across flock ages and operating conditions to evaluate both anomaly models. Exact durations and targets must be agreed after initial collection trials.
+
 ## Photos and escalation
 
 - [ ] Exterior long sides, interior from both ends, panels/nameplates, every equipment type, candidate hub location, wet areas, and visible hazards photographed and labeled with house ID.

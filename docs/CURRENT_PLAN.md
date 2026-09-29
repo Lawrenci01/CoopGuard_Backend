@@ -1,8 +1,14 @@
 # CoopGuard current working plan
 
-Updated: 2026-09-29. Status: design and pilot planning; no live-control approval yet.
+Updated: 2026-09-30. Status: native frontend implementation resumed at the user's request; backend and hardware are still in planning; no live-control approval yet.
 
 This is the working plan for the monorepo. It incorporates the decisions in [Handoff Summary v5](reference/CoopGuard_Handoff_Summary_v5.md), [User Flows v2](reference/CoopGuard_User_Flows_v2.md), and the [build-doc package](reference/build/README.md), plus the corrections below. The original v1.0 technical specification and `CoopGuard_Problem_and_Solution.pdf` are historical inputs, not current implementation instructions. If a source disagrees with this plan, record the difference here before implementation.
+
+### September 30 replan
+
+The user confirmed a native mobile app, JavaScript for application/backend functions including CRUD, Python reserved for AI, and **both environmental anomaly detection and bird sound anomaly detection**. Training data must be collected. The first sound feature flags unusual flock sounds for inspection; specific sound labels and disease diagnosis are outside this first model's scope. An Android phone is the initial test device.
+
+The recommended working design is **React Native + TypeScript, a Node.js + TypeScript backend, and a separate Python inference service on the Pi hub**, with C/C++ recommended for ESP32 firmware. Hub inference and TypeScript are recommendations responding to the user's request for advice; no backend or firmware migration has been implemented. See [the edge AI replan](EDGE_AI_REPLAN.md) for the rationale, decision status, data collection work, and service boundaries. The existing frontend is a simulated prototype and already uses TypeScript.
 
 ### Corrections to earlier planning language
 
@@ -16,6 +22,9 @@ This is the working plan for the monorepo. It incorporates the decisions in [Han
 | Alert resolution automatically steps fans down | Alert status and equipment control are separate; equipment follows current safe-control rules. |
 | Full sensor suite automatically fits low-cost battery/solar power | Measure the node energy budget, especially the MQ137 heater, before locking the power design and cost. |
 | A climate-only number is an overall bird-welfare score | Show measured climate status until a score formula and outcome validation exist. |
+| FastAPI owns application CRUD; Python also owns ordinary hub rules and the gateway | Application services move to JavaScript; TypeScript on Node.js is recommended. Python owns AI training, evaluation, and inference. |
+| Environmental analysis is exclusively rule-based during the pilot | Retain the approved control rules and add a separate environmental anomaly model, alongside the sound anomaly model, after data and evaluation gates. |
+| An ESP32 cannot run any ML model | Small models are possible on suitable chips; node inference is an optional later experiment requiring resource and field tests. Hub inference is the recommended first deployment. |
 
 ## Purpose and honest scope
 
@@ -23,15 +32,26 @@ CoopGuard aims to detect environmental problems early, make a safe local control
 
 The pilot targets one house over six months with a 3-5 person team. Broilers are tentative. An open-sided house without an existing controller is a planning preference only. The site survey decides house type, equipment, and whether the installation can be full-control or must be monitor-only. Full feature scope remains the target; the gates below are safety and evidence gates, not a reduction in scope.
 
-## Confirmed architecture
+## Working architecture
+
+The networking and control boundaries are retained. Language/runtime changes below incorporate the user's direction; TypeScript, hub model placement, and C/C++ firmware are the current recommendations for review.
 
 | Layer | Responsibility |
 | --- | --- |
-| ESP32-class nodes | Sample local sensors, run the local safety loop on control nodes, extract compact audio features, and report over LoRa. Every node is intended to relay, subject to measured radio and power feasibility. |
+| ESP32-class nodes | Sample local sensors, run the local safety loop on control nodes, extract compact audio features, and report over LoRa. C/C++ firmware is recommended. Model inference is deferred on nodes. Every node is intended to relay, subject to measured radio and power feasibility. |
 | LoRa network | Carry readings, events, heartbeats, and authenticated commands. It cannot carry raw audio or firmware images. Its stack, frequency, packet format, and field performance remain open. |
-| Raspberry Pi 5 hub | Run the LoRa gateway, FastAPI API, SQLite source of truth, rules, and hub-side model inference. Broadcast local WiFi for on-site app access. |
+| Raspberry Pi 5 hub | Run a separate gateway, Node.js application API, SQLite source of truth, deterministic hub rules, and a separate Python AI service. TypeScript is recommended for the API, sync, gateway integration, and ordinary rules. Both AI models are recommended to run here. Broadcast local WiFi for on-site app access. |
 | Optional cloud | Sync hub data to Supabase when farm internet works. Remote access shows the hub's last successful sync time. |
-| React Native app | Show five tabs: Dashboard, Alerts, Heat Map, Analytics, and Devices. Use the hub locally and Supabase remotely. Enforce roles in the API as well as the UI. |
+| React Native app | Native Android/iOS app with five bottom tabs: Dashboard, Alerts, Heat Map, Analytics, and Devices. Use TypeScript, the hub locally, and the defined cloud path remotely. Start physical testing on the user's Android phone. Enforce roles in the API as well as the UI. |
+
+### Edge AI and application services
+
+- **Edge location:** the Pi inside the farm is the recommended AI execution location. Installed models must work without internet or a connected phone. Training and evaluation happen on a development computer; only evaluated artifacts are deployed to the hub. Accelerator hardware is not assumed.
+- **Two model tracks:** environmental anomaly detection uses valid sensor histories and flock/house context; bird sound anomaly detection uses validated audio features and relevant noise context. Neither an anomaly score nor an unusual sound establishes a disease, cause, or measured welfare outcome.
+- **Application ownership:** the Node.js service owns CRUD, authentication, authorization, alert lifecycle, ordinary rules, synchronization, and the SQLite write boundary. Heavy inference runs in a separate Python process with bounded jobs, deadlines, health reporting, and resource limits. A stopped or slow AI process must not block the local API or control rules.
+- **AI authority:** models return structured insights. They do not send actuator commands, bypass node safety, or write directly to application tables. The backend validates and stores accepted results. The first models are advisory; existing site-approved deterministic rules remain responsible for automatic control.
+- **Collection before inference:** no usable dataset exists yet. Collect representative environmental histories, synchronized audio examples, and staff observations. Evaluate the actual features that fit the radio budget before locking the sound model or packet format. Short raw recordings for dataset work use a separate local collection/retrieval path, never the LoRa telemetry link. Storage hardware, retention, and transfer details are open.
+- **Performance:** changing languages does not establish a speed guarantee. Measure API latency, ingestion backlog, inference latency, memory, temperature, and recovery together on the chosen Pi while both models run. Python is reserved for AI application code; firmware toolchains may still use their standard build tools.
 
 ### Three separate connections and the equipment power path
 
@@ -63,6 +83,7 @@ There is no GSM/SMS channel. Remote push notifications require the farm to sync 
 | Stale air or ammonia | CO2 and ammonia readings with sensor-health and calibration status | Raise ventilation only through an approved site-specific control rule; alert staff | Staff inspect ventilation, drinkers, litter, and other causes. More fan speed alone may not resolve the source. |
 | Wet litter and fly risk | Moisture at measured spots, climate trends, optional fly count/audio features | Warn about a wet area or favorable conditions; label unvalidated fly activity as Beta | Staff locate and repair leaks and manage litter. A sparse sensor network cannot guarantee detection of every wet spot or infestation. |
 | Bird sound anomaly | On-node audio features and a validated hub model, when one exists | Beta insight, not a safety-control input | No disease diagnosis or confidence badge from an untrained model. |
+| Unusual environmental patterns | A validated hub model checks valid temperature, humidity, gas, and moisture histories against flock/house context | Advisory insight with affected locations, source time, and model status | Staff inspect the indicated area; an anomaly does not establish its cause. Existing control rules run independently. |
 | Power failure | Hub and node power-state reporting while backup power remains | Log locally and notify only through channels still available | CoopGuard does not power fan motors. The site needs a separately assessed emergency ventilation and power plan. |
 
 ## Safety and control contract
@@ -92,6 +113,7 @@ The minimum cross-layer record for a control event is: event/command ID, house a
 - In a full-control alert, show the measured condition, the **control output actually acknowledged by the node**, its time, and a clear way to check equipment if conditions worsen. In monitor-only mode show a recommendation with no actuator action button.
 - Keep the five-tab navigation and role matrix from the build docs. The server enforces every role restriction.
 - Treat sound distress and fly-activity classification as disabled or clearly Beta until trained and field validated. A model's confidence is not a general `AI Verified` guarantee; do not show a verification badge or numeric confidence before evaluation and calibration.
+- Both new anomaly models begin with `collecting data` or `not available` states. `Beta` requires a real evaluated model. A timed-out model, insufficient history, invalid inputs, or stale output is shown as unavailable or stale rather than normal. Unusual sound alerts ask staff to inspect; they do not label coughing or illness in this first model.
 - The planned 0-100 `Bird welfare` score lacks a formula and outcome validation. Until those exist, show measured climate conditions and trends without presenting a number as an overall welfare measurement. Weather and flock comparison remain adopted features, with weather staleness and insufficient-history states visible.
 - Keep farmer-facing wording plain, but accurately separate `fan control set to High` from `fan confirmed running`.
 
@@ -103,9 +125,11 @@ The minimum cross-layer record for a control event is: event/command ID, house a
 4. **Commissioning:** complete gas-sensor warm-up and calibration **before** the whole-house verification. Verify node coverage and readings, each controlled equipment stage, local behavior without a hub, app state accuracy, and staff training before entering Normal mode. Setup mode must not suppress a commissioned node's safety loop or hide a hazardous condition during installation.
 5. **Pilot measurement:** track time from threshold crossing to node output, time to staff acknowledgement, false and missed alerts, sensor drift, mesh delivery, device uptime, equipment response, environmental exposure, power incidents, mortality, and flock performance. Compare with the farm's prior flock records when available; one house cannot by itself establish that CoopGuard caused an outcome change.
 
+Both AI tracks also require the collection, offline evaluation, and shadow-mode gates in [the edge AI replan](EDGE_AI_REPLAN.md). Their production activation depends on evidence; including both in scope is not a promise that they will be accurate at pilot start.
+
 ## Decisions still open
 
-The site and controller status, final flock type, wiring assessor, firmware language, LoRa stack/payload and regional settings, local sensor interval, thresholds and flock-age schedule, calibration method, node spacing, safe fallback output per appliance, full-node power budget, fan-test failure flow, remote-command expiry and cloud login bridge, worker flock permission, and any validated welfare-score formula remain open. Do not substitute a placeholder value for a live-control decision.
+The site and controller status, final flock type, wiring assessor, final firmware language, LoRa stack/payload and regional settings, local sensor interval, thresholds and flock-age schedule, calibration method, node spacing, safe fallback output per appliance, full-node power budget, fan-test failure flow, remote-command expiry and cloud login bridge, worker flock permission, and any validated welfare-score formula remain open. Replanning also requires review of the recommended TypeScript/Pi/C++ split, API framework, gateway driver, exact AI input/features and runtime, dataset capture hardware, sample coverage, evaluation targets, inference schedule, and Pi resource budget. Do not substitute a placeholder value for a live-control decision.
 
 ## Evidence behind the corrections
 

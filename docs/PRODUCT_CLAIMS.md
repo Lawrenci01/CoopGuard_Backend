@@ -15,6 +15,8 @@ This replaces the overbroad outcome language in the historical `CoopGuard_Proble
 - Earlier detection and local response may reduce time birds spend in harmful heat or poor-air conditions.
 - Wet-litter and fly-risk indicators may help staff target inspection and corrective work. A sensor only covers its measured location.
 - Sound and fly-activity models may become useful after training and field evaluation. Until then, they are Beta or disabled.
+- Both planned environmental and bird sound anomaly models need representative data and evaluation. Initial sound output means `unusual sounds detected; inspect the flock`, not a diagnosis or a verified cough/distress classification. Before a usable model exists, show `collecting data` or `not available`.
+- Hub-based edge inference is designed to run without internet once an evaluated model is installed; its usefulness and Pi resource requirements must be measured. Loss of the hub makes those AI insights unavailable while commissioned node safety rules continue.
 - Flock comparison may reveal patterns once enough comparable flocks exist. It cannot alone establish that CoopGuard caused an improvement.
 - Lower installed cost than an enterprise system is an estimate until a site-specific bill of materials, installation, maintenance, and backup-power costs are measured.
 
