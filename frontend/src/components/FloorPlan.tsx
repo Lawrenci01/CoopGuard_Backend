@@ -95,7 +95,7 @@ export function FloorPlan({
               accessibilityRole="button"
               accessibilityLabel={`${en.sensor} ${sensor.number}, ${en.section} ${sensor.section}, ${sensor.online ? `${sensor.readings[metric].toFixed(metric === 'temperature' || metric === 'ammonia' ? 1 : 0)} ${metricUnits[metric]}` : en.offline}`}
               onPress={() => onSelect(sensor)}
-              style={({ hovered, pressed }) => [
+              style={({ pressed }) => [
                 {
                   position: 'absolute',
                   left: `${sensor.x * 100}%`,
@@ -107,7 +107,7 @@ export function FloorPlan({
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: 3,
-                  transform: [{ scale: hovered || pressed ? 1.1 : 1 }],
+                  transform: [{ scale: pressed ? 1.1 : 1 }],
                 },
               ]}
             >

@@ -2,12 +2,15 @@ import { createDemoSnapshot } from '../data/fixtures';
 import { canRequestControl, DEMO_REQUEST_TTL_MS, settleRequest } from '../domain/policy';
 import type { FarmService, FarmSnapshot, PreviewContext } from '../domain/types';
 
-/** In-memory preview adapter. Makes no network or equipment calls. */
+/** Dummy farm engine. Its caller persists state; it never contacts equipment. */
 export class DemoFarmService implements FarmService {
   private snapshot: FarmSnapshot;
   private sequence = 0;
-  constructor(private clock = () => Date.now()) {
-    this.snapshot = createDemoSnapshot(clock());
+  constructor(
+    private clock = () => Date.now(),
+    saved?: FarmSnapshot,
+  ) {
+    this.snapshot = saved ? JSON.parse(JSON.stringify(saved)) : createDemoSnapshot(clock());
   }
   private copy(): FarmSnapshot {
     return JSON.parse(JSON.stringify(this.snapshot));
@@ -37,7 +40,7 @@ export class DemoFarmService implements FarmService {
     const now = this.clock();
     const request = settleRequest(
       {
-        id: `demo-command-${++this.sequence}`,
+        id: `demo-command-${now}-${++this.sequence}`,
         requestedAt: now,
         expiresAt: now + DEMO_REQUEST_TTL_MS,
         status: 'pending',

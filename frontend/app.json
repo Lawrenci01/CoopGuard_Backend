@@ -3,6 +3,7 @@
     "name": "CoopGuard",
     "slug": "coopguard",
     "scheme": "coopguard",
+    "platforms": ["ios", "android"],
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -11,14 +12,12 @@
       "bundleIdentifier": "com.coopguard.app"
     },
     "android": {
-      "package": "com.coopguard.app"
-    },
-    "web": {
-      "bundler": "metro",
-      "name": "CoopGuard",
-      "shortName": "CoopGuard",
-      "backgroundColor": "#F7F8F3",
-      "themeColor": "#214F3D"
+      "package": "com.coopguard.app",
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "plugins": ["expo-font"]
   }

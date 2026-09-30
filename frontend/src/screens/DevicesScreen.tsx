@@ -20,9 +20,13 @@ import type { Sensor } from '../domain/types';
 import { Button, Card, Chip, Choice, Label, SectionTitle, Sheet, styles } from '../components/ui';
 import { ScreenFrame } from '../components/ScreenFrame';
 import { AddSensorWizard, SensorSheet } from '../components/FarmSheets';
+import { HouseSetupForm } from '../components/HouseSetupForm';
+import { suggestedSections, surveyRecommendation } from '../domain/setup';
+import { FlockManager, Maintenance, TeamManager } from '../components/FarmManagement';
 
 export function DevicesScreen() {
-  const { snapshot, context, now, notifications, toggleNotifications } = useFarm();
+  const { snapshot, context, now, notifications, toggleNotifications, survey } = useFarm();
+  const [setup, setSetup] = useState(false);
   const { width } = useWindowDimensions();
   const wide = width >= 1100;
   const [query, setQuery] = useState(''),
@@ -104,6 +108,8 @@ export function DevicesScreen() {
               </Chip>
             </View>
           </View>
+        </View>
+        <View style={{ marginTop: 12 }}>
           <Chip tone="muted">{en.previewOnly}</Chip>
         </View>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 28, marginTop: 24 }}>
@@ -125,7 +131,10 @@ export function DevicesScreen() {
         </Label>
       </Card>
       <View>
-        <SectionTitle title={en.sensors} subtitle={en.sensorsReporting} />
+        <SectionTitle
+          title={en.sensors}
+          subtitle={`${snapshot.sensors.filter((s) => s.online).length} of ${snapshot.sensors.length} sensors reporting`}
+        />
         <View
           style={{
             flexDirection: wide ? 'row' : 'column',
@@ -209,14 +218,14 @@ export function DevicesScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={`${en.sensor} ${s.number}, ${s.online ? en.online : en.offline}`}
                     onPress={() => setSensor(s)}
-                    style={({ hovered, pressed }) => ({
+                    style={({ pressed }) => ({
                       flexDirection: 'row',
                       alignItems: 'center',
                       padding: 18,
                       gap: 14,
                       borderBottomWidth: 1,
                       borderColor: colors.border,
-                      backgroundColor: hovered || pressed ? '#F7F9F3' : '#fff',
+                      backgroundColor: pressed ? '#F7F9F3' : '#fff',
                     })}
                   >
                     <View
@@ -258,6 +267,38 @@ export function DevicesScreen() {
           })}
         </Card>
       </View>
+      <FlockManager />
+      <Card style={{ gap: 14 }}>
+        <SectionTitle title={en.savedDraft} />
+        <Chip tone="amber">{en.draftOnly}</Chip>
+        {survey && (
+          <>
+            <Label weight="bold">
+              {survey.farmName} · {survey.houseName}
+            </Label>
+            <Label>
+              {survey.lengthMetres} m × {survey.widthMetres} m · {en.suggestedSections}:{' '}
+              {suggestedSections(survey)}
+            </Label>
+            <Label>{en.surveyOutcome[surveyRecommendation(survey)]}</Label>
+          </>
+        )}
+        <Label style={{ color: colors.muted }}>{en.draftSeparate}</Label>
+        <Button
+          variant="secondary"
+          disabled={context.role === 'worker'}
+          onPress={() => setSetup(true)}
+        >
+          {survey ? en.editDraft : en.prepareHouse}
+        </Button>
+      </Card>
+      <Card style={{ gap: 10 }}>
+        <SectionTitle title={en.localDrafts} />
+        <Label style={{ color: colors.muted }}>{en.cacheBody}</Label>
+        <Label weight="medium">
+          {en.readingsAsOf}: {relativeTime(snapshot.sampledAt, now)}
+        </Label>
+      </Card>
       <View>
         <SectionTitle title={en.settings} />
         <Card style={{ gap: 16 }}>
@@ -303,9 +344,24 @@ export function DevicesScreen() {
       </View>
       <SensorSheet sensor={sensor} onClose={() => setSensor(null)} />
       <Sheet visible={!!info} title={info?.title ?? ''} onClose={() => setInfo(null)}>
-        <Label>{info?.body}</Label>
+        {info?.title === en.people ? (
+          <TeamManager />
+        ) : info?.title === en.calibration ? (
+          <Maintenance mode="calibration" />
+        ) : info?.title === en.diagnostics ? (
+          <Maintenance mode="diagnostics" />
+        ) : info?.title === en.software ? (
+          <Maintenance mode="software" />
+        ) : (
+          <Label>{info?.body}</Label>
+        )}
       </Sheet>
       {wizard && <AddSensorWizard visible onClose={() => setWizard(false)} />}
+      {setup && (
+        <Sheet visible title={en.setupTitle} onClose={() => setSetup(false)}>
+          <HouseSetupForm onDone={() => setSetup(false)} />
+        </Sheet>
+      )}
     </ScreenFrame>
   );
 }

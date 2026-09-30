@@ -1,90 +1,81 @@
-# CoopGuard frontend
+# CoopGuard mobile app
 
-The first interactive frontend, built with Expo, React Native, TypeScript, and React Navigation. It has a phone layout with five bottom tabs and a wider browser layout with a sidebar. Farm readings, equipment, roles, and connections are **simulated**.
+Native **React Native + TypeScript** app using Expo, with working local features and dummy farm data. Android is the first installation target. JavaScript owns the app and local CRUD; Python is reserved for the planned hub AI service.
 
-Implement against the [current plan](../docs/CURRENT_PLAN.md) and [interface contract](../docs/INTERFACE_CONTRACT.md). Site decisions and calibration requirements remain open; this prototype does not commission or control real equipment.
+## Install on Android
 
-## Run locally
+The standalone build is generated at `dist/android/CoopGuard.apk`. Transfer it to the phone, open it, and allow installation from the app used to open the file when Android asks. Alternatively, with USB debugging enabled:
 
-Use Node.js 24 LTS and npm. From the monorepo root:
+```powershell
+adb install -r dist/android/CoopGuard.apk
+adb shell am start -n com.coopguard.app/.MainActivity
+```
+
+Open **CoopGuard** from the phone's app list. Tap **Open my farm**, or **Set up my house** to enter house details. The APK includes the JavaScript bundle and fonts and runs without Expo Go, a development server, a PC connection, or internet. It uses the Android test signing key for this internal build; store distribution requires a private release key.
+
+The **Sample data** label means sensor readings and equipment responses are dummy data. Forms and actions save real local records on this phone. No physical hub or equipment is connected. This local build blocks Android's Internet permission, so the installed app cannot depend on a network. Restore that permission when integrating the real hub/backend.
+
+## Working features
+
+| Feature          | What you can do                                                                                                                     |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Overview         | Read sensor summaries, inspect a sensor, open related alerts, request a simulated full-power override                               |
+| Alerts           | Filter active/history, acknowledge an alert, view readings from current or retired sensors; acknowledgment survives restart         |
+| House map        | Switch five metric layers, inspect sensors, see saved sensor placements                                                             |
+| Trends           | Switch metrics and periods in the dummy history; inspect both AI sections                                                           |
+| House details    | Save and edit names, dimensions, house type, controller and flock type; header and control mode update                              |
+| Sensors          | As Technician, add a sensor through the checks, move it, retire it, inspect its archived record, and record a sample accuracy check |
+| Flocks           | End a cycle with confirmation, retain its summary, start another with a validated date and bird count                               |
+| Inspection notes | Create, edit, delete, and export environment or sound observations from the AI panels                                               |
+| Farm team        | Owner can create, edit, and remove local team profiles while retaining an owner; these are not authentication accounts              |
+| Settings         | Persist notification preference, sample connection, role, control mode, and AI availability state                                   |
+| System check     | Inspect current local data, sample sensor coverage, AI status, and retired sensor records                                           |
+
+Use the avatar or connection label to open **Sample settings**. Select **Technician** and **At the farm** to manage sensors. These roles exercise permissions in the local data layer; they are not secure sign-in. Existing-controller or uncertain house profiles restrict sample control to monitor-only. The sample map has three sections; saved dimensions do not yet generate a commissioned floor plan.
+
+Both AI tracks remain visible: environmental patterns and unusual flock sounds. They show **Needs pilot data** or **Service unavailable**. Inspection notes work now; recording audio, training, and inference need the future data pipeline. No model diagnosis or confidence score is fabricated.
+
+## Offline persistence and controls
+
+`LocalFarmRepository` uses a validated, versioned AsyncStorage record. Mutations are serialized and saved before the UI confirms success. It persists house details, devices, archived devices, acknowledgments, inspection notes, team profiles, flock history, preferences, and dummy farm state. Failed writes do not replace the last saved state. Corrupt saved data produces a retry screen without overwriting the stored record.
+
+The dummy farm runs entirely on the phone, including in airplane mode. The connection selector exercises farm-link scenarios; it does not measure the phone's internet connection. In the disconnected scenario, equipment actions are blocked, while house details, notes, team records and flock changes can still be saved locally. Actual cloud sync is not implemented or claimed.
+
+Simulated full power expires after two hours. Restarting or tapping again cannot extend its deadline. Remote sample requests expire after 60 seconds and require an explicit valid reconnect; expired requests never apply. The local dummy store preserves these simulation timestamps. The separate future reading-cache adapter strips commands and must never be used as a hardware command queue. Real authorization, command acknowledgement, commissioning and safety limits must also be enforced on the hub and nodes.
+
+The eventual transport is **sensor → LoRa → Pi hub → local WiFi → phone**. A phone does not connect directly to LoRa.
+
+## Build the standalone APK on Windows
+
+Use Node.js 24, Java 17, and the Android SDK with platform 36, build tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1. Set `ANDROID_HOME` to the SDK directory; the script also recognizes `C:\Android`. Install dependencies and run:
 
 ```powershell
 cd frontend
 npm ci
-npm run web
+npm run build:android
 ```
 
-Open the local URL printed by Expo. No API keys or farm hardware are needed.
+The script generates the native Android project with Expo prebuild and runs Gradle `:app:assembleRelease`, then copies the APK to `dist/android/CoopGuard.apk`. Default ABIs are `arm64-v8a,armeabi-v7a`; pass `-Architectures arm64-v8a,x86_64` directly to the PowerShell script for an emulator build. Generated native folders and build artifacts are ignored by Git. First builds download substantial Android/Gradle dependencies.
 
-For a native development environment, use `npm start`, `npm run android`, or `npm run ios` with the appropriate Expo client/development build and platform tools. The iOS simulator requires macOS. Native device behavior has not been verified yet.
+See the official [Expo local release build guide](https://docs.expo.dev/guides/local-app-production/) and [Android SDK command tools](https://developer.android.com/studio#command-tools). No Expo account, EAS subscription, or API keys are needed for this local build.
 
-## What is implemented
-
-| Screen    | Interactions                                                                                             |
-| --------- | -------------------------------------------------------------------------------------------------------- |
-| Overview  | House summary, measured averages, example trends, equipment status, control confirmation, map links      |
-| Alerts    | Active/history filters, acknowledgment, related sensor readings, simulated fan increase                  |
-| House map | Five metric layers, selectable sensors, section averages, missing coverage                               |
-| Trends    | Metric and date-range selection, clearly labeled example history                                         |
-| Devices   | Search, connection filter, sensor details, hub status, notification preference, installation walkthrough |
-
-The avatar or **Preview settings** opens connection, role, and control-mode scenarios:
-
-- **At the farm:** local hub WiFi, with simulated control acknowledgment.
-- **Away from farm:** synced-data UI; a control request waits for a simulated farm reconnect and expires after 60 seconds. This lifetime is a demonstration value, not an approved production TTL.
-- **No connection:** saved-reading UI; acknowledgment and equipment changes are disabled.
-- **Monitor only:** equipment controls are hidden and alerts recommend checks.
-- **Technician + At the farm:** enables the installation walkthrough. Failed equipment checks and incomplete calibration block progression. Finishing does not actually add a sensor.
-
-Acknowledging an alert does not resolve its condition. Fan output acknowledgment never claims that a motor was measured turning. A full-power override expires after two simulated hours, and repeated requests cannot extend it. Missing observations are excluded from averages and incomplete coverage is labeled.
-
-## Scope of this version
-
-The simulator runs in memory and resets on reload. Only the notification preference is persisted locally, using AsyncStorage. Its switch does not register for real push notifications. Connectivity choices exercise UI states; they do not detect networks, retrieve a real cloud snapshot, persist farm readings, or synchronize data.
-
-There is no login, hub discovery, production API, durable reading cache, real QR pairing, firmware update, LoRa communication, push delivery, or trained AI model yet. Weather and sound insights show their unavailable states. Preview roles are not authorization. Backend and firmware must independently enforce permissions, commissioning gates, command expiry, and override limits.
-
-The eventual connection is **sensor → LoRa → hub → local WiFi → phone**. Internet enables cloud sync when available. The phone does not connect directly to LoRa. A web export alone is not an installable offline PWA; installed native offline behavior and cache recovery remain integration work.
-
-## Code map
-
-```text
-App.tsx                  Navigation, header, responsive app shell
-src/screens/             Five primary screens
-src/components/          Shared controls, map, chart, dialogs, walkthrough
-src/domain/              Types, request policy, measured-reading aggregation
-src/services/            DemoFarmService; no network/equipment side effects
-src/state/               Shared state, clock, persistent notification preference
-src/data/                Explicitly simulated sensors, alerts, and histories
-src/i18n/en.ts           English copy, time labels, localization starting point
-src/theme.ts             Colors and bundled fonts
-tests/                   Request lifecycle and observation coverage tests
-```
-
-When the backend starts, add a hub/cloud adapter behind the `FarmService` boundary and replace the preview-specific provider actions. Production status and timestamps must come from validated hub messages. Add a durable last-known cache with its original observation times; never replay offline control commands automatically. Do not derive production thresholds from the demo data or its colors.
+For development only, `npm start` serves the app to compatible Expo Go installations. `npm run android` builds a native debug installation; it uses the development server. Use **build:android** for the standalone APK.
 
 ## Checks
 
 ```powershell
 npm run typecheck
 npm test
+npm run test:ui
 npm run format:check
-npm run export:web
-npx expo install --check
+npx expo-doctor
 npm audit
 ```
 
-The tests cover offline and monitor-only restrictions, local acknowledgment, pending/expired/rejected remote requests, override expiry, repeated requests, technician access, immutable snapshots, and incomplete observation coverage.
+Domain tests exercise deadlines, permissions, data validation, durable CRUD, serialized writes, storage failures and corruption. Native component tests exercise navigation, sensor creation, inspection notes, saved acknowledgments and house setup. Decorative icons and platform storage are mocked in those component tests; installation and cold-start checks on a phone are separate evidence. See `dist/android/VERIFICATION.md` when a device run is available.
 
-The package override updates only the `xcode` tool's `uuid` dependency to a patched CommonJS-compatible release. Its UUID generation was checked. Keep this override under review when upgrading Expo.
+## Implementation boundaries
 
-### Manual review before merging into a release
+Real hub discovery, secure accounts, actual readings, cloud sync, hardware pairing/calibration/updates, OS push delivery, weather data, and trained AI require their backend/hardware services. The notification switch currently saves a preference. Sample charts remain fixtures and are not generated from actual flock observations. The app does not record audio or drive mains equipment.
 
-1. Review all screens at phone and desktop widths, including long text and larger system fonts.
-2. Acknowledge a heat alert: it must stay visible until resolved.
-3. Send an **Away from farm** request: output stays unchanged until **Simulate farm reconnect**. After 60 seconds, reconnect must not apply it.
-4. Select **No connection** and **Monitor only**: equipment controls must be disabled or hidden.
-5. Select **Technician**, open the walkthrough, choose a control sensor, and fail its equipment test: Continue must stay disabled. Calibration must also precede verification.
-6. Open Sensor 11 and Section C: missing readings must not be represented as complete coverage.
-
-Visual browser review and native device testing are still outstanding because no browser was connected during this implementation session.
+`src/services/localFarmRepository.ts` owns local app mutations; `demoFarmService.ts` owns dummy control behavior; `src/state/FarmProvider.tsx` connects them to native screens. Replace this adapter with the authenticated Node.js/TypeScript backend as those contracts are implemented. Read the [current plan](../docs/CURRENT_PLAN.md) and [edge AI replan](../docs/EDGE_AI_REPLAN.md) before connecting hardware.

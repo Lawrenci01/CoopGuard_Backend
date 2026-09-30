@@ -1,6 +1,6 @@
 # CoopGuard current working plan
 
-Updated: 2026-09-30. Status: native frontend implementation resumed at the user's request; backend and hardware are still in planning; no live-control approval yet.
+Updated: 2026-09-30. Status: native mobile frontend with persistent local features and dummy farm data; standalone Android installation is the current deliverable. Backend and hardware are still in planning; no live-control approval yet.
 
 This is the working plan for the monorepo. It incorporates the decisions in [Handoff Summary v5](reference/CoopGuard_Handoff_Summary_v5.md), [User Flows v2](reference/CoopGuard_User_Flows_v2.md), and the [build-doc package](reference/build/README.md), plus the corrections below. The original v1.0 technical specification and `CoopGuard_Problem_and_Solution.pdf` are historical inputs, not current implementation instructions. If a source disagrees with this plan, record the difference here before implementation.
 
@@ -8,7 +8,9 @@ This is the working plan for the monorepo. It incorporates the decisions in [Han
 
 The user confirmed a native mobile app, JavaScript for application/backend functions including CRUD, Python reserved for AI, and **both environmental anomaly detection and bird sound anomaly detection**. Training data must be collected. The first sound feature flags unusual flock sounds for inspection; specific sound labels and disease diagnosis are outside this first model's scope. An Android phone is the initial test device.
 
-The recommended working design is **React Native + TypeScript, a Node.js + TypeScript backend, and a separate Python inference service on the Pi hub**, with C/C++ recommended for ESP32 firmware. Hub inference and TypeScript are recommendations responding to the user's request for advice; no backend or firmware migration has been implemented. See [the edge AI replan](EDGE_AI_REPLAN.md) for the rationale, decision status, data collection work, and service boundaries. The existing frontend is a simulated prototype and already uses TypeScript.
+The recommended working design is **React Native + TypeScript, a Node.js + TypeScript backend, and a separate Python inference service on the Pi hub**, with C/C++ recommended for ESP32 firmware. No backend or firmware migration has been implemented. See [the edge AI replan](EDGE_AI_REPLAN.md) for the rationale, decision status, data collection work, and service boundaries.
+
+The user requested a working installed app with dummy data, rather than an Expo-only preview. The frontend now saves house settings, sensor additions/moves/retirements, alert acknowledgments, flock cycles, inspection notes, local team profiles and preferences on the phone. The local simulation preserves dummy command deadlines across restarts; it cannot send physical commands. Sample roles are not real authentication. The standalone APK embeds code and fonts and blocks the Internet permission for this local-only version. Backend integration must explicitly restore network permission and implement actual discovery, authorization and synchronization. See [the frontend guide](../frontend/README.md) for supported actions and remaining integrations.
 
 ### Corrections to earlier planning language
 

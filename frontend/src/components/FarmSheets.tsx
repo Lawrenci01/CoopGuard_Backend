@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { View } from 'react-native';
 import { ArrowRight, Check, Fan, ScanLine, Wifi } from 'lucide-react-native';
-import type { MetricKey, Sensor } from '../domain/types';
+import type { MetricKey, Section, Sensor } from '../domain/types';
+import { canManageSensors } from '../domain/policy';
+import { SensorEditor } from './FarmManagement';
 import { en, countdown, relativeTime } from '../i18n/en';
 import { metricUnits } from '../data/fixtures';
 import { colors } from '../theme';
@@ -61,13 +63,31 @@ export function PreviewSheet({ visible, onClose }: { visible: boolean; onClose: 
             </Button>
           </Card>
         )}
+        <View style={{ gap: 9 }}>
+          <Label weight="bold">{en.aiDemoState}</Label>
+          <Choice
+            values={['collecting', 'unavailable']}
+            selected={farm.aiState}
+            labels={en.aiStateOptions}
+            onSelect={farm.setAIState}
+          />
+        </View>
+        <Button
+          variant="secondary"
+          onPress={async () => {
+            onClose();
+            await farm.returnWelcome();
+          }}
+        >
+          {en.returnWelcome}
+        </Button>
       </View>
     </Sheet>
   );
 }
 
 export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClose: () => void }) {
-  const { snapshot, now } = useFarm();
+  const { snapshot, now, context } = useFarm();
   return (
     <Sheet
       visible={!!sensor}
@@ -78,7 +98,11 @@ export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClos
         <View style={{ gap: 18 }}>
           <View style={styles.row}>
             <Chip tone={sensor.online ? 'green' : 'muted'} dot>
-              {sensor.online ? en.online : en.offline}
+              {context.connection !== 'local'
+                ? en.savedStatus
+                : sensor.online
+                  ? en.online
+                  : en.offline}
             </Chip>
             <Label style={{ color: colors.muted }}>
               {en.section} {sensor.section} · {sensor.control ? en.controlsFans : en.sensingOnly}
@@ -133,6 +157,9 @@ export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClos
               <Label weight="bold">{en[sensor.signal]}</Label>
             </View>
           </View>
+          {canManageSensors(context) && snapshot.sensors.some((n) => n.id === sensor.id) && (
+            <SensorEditor key={sensor.id} sensor={sensor} onClose={onClose} />
+          )}
         </View>
       )}
     </Sheet>
@@ -218,10 +245,20 @@ export function RequestStatus() {
 }
 
 export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { context } = useFarm();
+  const { context, perform, snapshot, data } = useFarm();
   const [step, setStep] = useState(0),
     [scanned, setScanned] = useState(false),
-    [section, setSection] = useState('A');
+    [section, setSection] = useState<Section>('A');
+  const [busy, setBusy] = useState(false);
+  const [number] = useState(() =>
+    String(
+      Math.max(
+        0,
+        ...snapshot.sensors.map((n) => Number(n.number)),
+        ...data.retired.map((n) => Number(n.number)),
+      ) + 1,
+    ).padStart(2, '0'),
+  );
   const [role, setRole] = useState('sensing'),
     [test, setTest] = useState<'unanswered' | 'passed' | 'failed'>('unanswered'),
     [calibrated, setCalibrated] = useState(false);
@@ -279,7 +316,7 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
             variant={scanned ? 'secondary' : 'primary'}
             onPress={() => setScanned(true)}
           >
-            {scanned ? en.foundSensor : en.sampleScan}
+            {scanned ? `Sample Sensor ${number} found` : en.sampleScan}
           </Button>
         )}
         {step === 1 && (
@@ -325,7 +362,7 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
         {step === 5 && (
           <Card style={{ backgroundColor: colors.greenSoft }}>
             {[
-              en.foundSensor,
+              `Sample Sensor ${number}`,
               `${en.section} ${section}`,
               role === 'control' ? en.testYes : en.sensingOnly,
               en.calibrationDemo,
@@ -342,9 +379,31 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
         ) : (
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Button
-              disabled={!pass || context.role !== 'technician' || context.connection !== 'local'}
+              disabled={
+                busy || !pass || context.role !== 'technician' || context.connection !== 'local'
+              }
               icon={ArrowRight}
-              onPress={() => setStep((value) => value + 1)}
+              onPress={async () => {
+                if (step !== 5) {
+                  setStep((value) => value + 1);
+                  return;
+                }
+                setBusy(true);
+                if (
+                  await perform(
+                    {
+                      type: 'addSensor',
+                      section,
+                      control: role === 'control',
+                      tested: test === 'passed',
+                      calibrated,
+                    },
+                    'Sensor added and saved.',
+                  )
+                )
+                  setStep(6);
+                setBusy(false);
+              }}
             >
               {step === 5 ? en.finishPreview : en.continue}
             </Button>

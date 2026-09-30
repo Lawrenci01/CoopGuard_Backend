@@ -11,17 +11,17 @@ Offline-first poultry-house monitoring and climate-control pilot. This is one Gi
 
 The components share one repository so changes to their interfaces can be reviewed together.
 
-## Android mobile preview
+## Android mobile app
 
-The frontend is a native React Native/TypeScript app for Android and iOS. Begin testing on an Android phone using Expo Go. Farm data and connections are simulated until the Node.js backend is implemented.
+The frontend is a native React Native/TypeScript app with persistent local features and dummy farm data. Build the standalone Android APK to run on a phone without Expo Go, a PC connection, or internet.
 
 ```powershell
 cd frontend
 npm ci
-npm start
+npm run build:android
 ```
 
-Open Expo Go on your Android phone and scan the terminal QR code with the phone and PC on the same WiFi network. See the [frontend guide](frontend/README.md) for setup drafts, saved readings, AI states, checks, and backend integration work. It does not connect to real equipment yet.
+Install `frontend/dist/android/CoopGuard.apk`. See the [frontend guide](frontend/README.md) for Android build prerequisites, house setup, saved sensor changes, flock cycles, inspection notes, checks, and integration boundaries. Real readings, equipment, cloud sync, and AI inference still require their services.
 
 ## Working documents
 

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { View, useWindowDimensions } from 'react-native';
-import { CalendarDays, CloudSun, AudioLines, TrendingUp } from 'lucide-react-native';
+import { CalendarDays, CloudSun, TrendingUp } from 'lucide-react-native';
 import { en } from '../i18n/en';
 import { colors } from '../theme';
 import { trendValues, metricUnits } from '../data/fixtures';
 import type { MetricKey } from '../domain/types';
-import { Card, Chip, Choice, Label, SectionTitle, styles } from '../components/ui';
+import { Card, Choice, Label, SectionTitle, styles } from '../components/ui';
+import { AIInsights } from '../components/AIInsights';
 import { ScreenFrame } from '../components/ScreenFrame';
 import { TrendChart } from '../components/TrendChart';
 
@@ -88,18 +89,7 @@ export function AnalyticsScreen() {
           <Label style={{ color: colors.muted }}>{en.comparisonBody}</Label>
         </Card>
       </View>
-      <Card>
-        <View style={[styles.row, { alignItems: 'flex-start' }]}>
-          <AudioLines size={25} color={colors.muted} />
-          <View style={{ flex: 1, gap: 7 }}>
-            <Label weight="bold" style={{ fontSize: 18 }}>
-              {en.birdNoise}
-            </Label>
-            <Label style={{ color: colors.muted }}>{en.soundNote}</Label>
-          </View>
-          <Chip tone="muted">{en.learning}</Chip>
-        </View>
-      </Card>
+      <AIInsights />
     </ScreenFrame>
   );
 }

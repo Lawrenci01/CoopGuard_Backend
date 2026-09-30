@@ -1,21 +1,28 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DemoFarmService } from '../services/demoFarmService';
-import type {
-  ConnectionMode,
-  ControlMode,
-  FarmSnapshot,
-  PreviewContext,
-  Role,
-} from '../domain/types';
+import {
+  LocalFarmRepository,
+  seedLocalFarm,
+  type LocalAction,
+  type LocalFarmState,
+} from '../services/localFarmRepository';
+import type { HouseSurveyDraft } from '../domain/setup';
+import type { ConnectionMode, ControlMode, Role } from '../domain/types';
 import { en } from '../i18n/en';
 
-interface FarmContextValue {
-  snapshot: FarmSnapshot;
-  context: PreviewContext;
+interface FarmContextValue extends Pick<
+  LocalFarmState,
+  'snapshot' | 'context' | 'started' | 'notifications' | 'aiState'
+> {
+  data: LocalFarmState;
   now: number;
-  notifications: boolean;
+  ready: boolean;
+  loadError: string | null;
+  retryLoad: () => Promise<void>;
+  survey: HouseSurveyDraft | null;
   toast: string | null;
+  perform: (action: LocalAction, message?: string) => Promise<boolean>;
+  setAIState: (value: LocalFarmState['aiState']) => void;
   setConnection: (value: ConnectionMode) => void;
   setRole: (value: Role) => void;
   setControlMode: (value: ControlMode) => void;
@@ -25,76 +32,113 @@ interface FarmContextValue {
   refresh: () => Promise<void>;
   toggleNotifications: () => Promise<void>;
   notify: (message: string) => void;
+  enterDemo: () => Promise<void>;
+  returnWelcome: () => Promise<void>;
+  saveSurvey: (draft: HouseSurveyDraft) => Promise<boolean>;
 }
 const FarmContext = createContext<FarmContextValue | null>(null);
 
 export function FarmProvider({ children }: React.PropsWithChildren) {
-  const [service] = useState(() => new DemoFarmService());
-  const [snapshot, setSnapshot] = useState(() => service.tick());
-  const [context, setContext] = useState<PreviewContext>({
-    connection: 'local',
-    role: 'owner',
-    controlMode: 'full',
-  });
+  const [repository] = useState(() => new LocalFarmRepository(AsyncStorage));
+  const [data, setData] = useState(seedLocalFarm);
   const [now, setNow] = useState(Date.now());
-  const [notifications, setNotifications] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const mounted = useRef(true);
   function notify(message: string) {
+    if (!mounted.current) return;
     clearTimeout(toastTimer.current);
     setToast(message);
     toastTimer.current = setTimeout(() => setToast(null), 4500);
   }
-  useEffect(() => {
-    AsyncStorage.getItem('coopguard.notificationPreference')
-      .then((value) => {
-        if (value !== null) setNotifications(value === 'true');
-      })
-      .catch(() => {});
-    const timer = setInterval(() => {
-      setNow(Date.now());
-      setSnapshot(service.tick());
-    }, 1000);
-    return () => {
-      clearInterval(timer);
-      clearTimeout(toastTimer.current);
-    };
-  }, [service]);
-  async function run(action: () => Promise<FarmSnapshot>, message?: string) {
+  async function hydrate() {
     try {
-      setSnapshot(await action());
-      if (message) notify(message);
-    } catch {
-      notify(en.toastError);
+      const saved = await repository.load();
+      if (mounted.current) {
+        setData(saved);
+        setLoadError(null);
+      }
+    } catch (error) {
+      if (mounted.current) setLoadError(error instanceof Error ? error.message : en.cacheError);
+    } finally {
+      if (mounted.current) setReady(true);
     }
   }
+  useEffect(() => {
+    mounted.current = true;
+    void hydrate();
+    return () => {
+      mounted.current = false;
+      clearTimeout(toastTimer.current);
+    };
+  }, []);
+  async function perform(action: LocalAction, message?: string) {
+    if (!ready || loadError) return false;
+    try {
+      const next = await repository.dispatch(action);
+      if (mounted.current) setData(next);
+      if (message) notify(message);
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : en.toastError);
+      return false;
+    }
+  }
+  useEffect(() => {
+    if (!ready || loadError) return;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      void perform({ type: 'tick' });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [ready, loadError]);
   const value: FarmContextValue = {
-    snapshot,
-    context,
+    ...data,
+    data,
+    survey: data.house,
     now,
-    notifications,
+    ready,
+    loadError,
+    retryLoad: hydrate,
     toast,
     notify,
-    setConnection: (connection) => setContext((previous) => ({ ...previous, connection })),
-    setRole: (role) => setContext((previous) => ({ ...previous, role })),
-    setControlMode: (controlMode) => setContext((previous) => ({ ...previous, controlMode })),
-    acknowledge: (id) => run(() => service.acknowledge(id, context), en.toastAck),
-    requestFullPower: () => run(() => service.requestFullPower(context)),
+    perform,
+    setAIState: (value) => {
+      void perform({ type: 'ai', value });
+    },
+    setConnection: (connection) => {
+      void perform({ type: 'context', patch: { connection } });
+    },
+    setRole: (role) => {
+      void perform({ type: 'context', patch: { role } });
+    },
+    setControlMode: (controlMode) => {
+      void perform({ type: 'context', patch: { controlMode } });
+    },
+    acknowledge: async (id) => {
+      await perform({ type: 'ack', id }, en.toastAck);
+    },
+    requestFullPower: async () => {
+      await perform({ type: 'fullPower' });
+    },
     reconnect: async () => {
-      const next = { ...context, connection: 'local' as const };
-      setContext(next);
-      await run(() => service.simulateReconnect(next));
+      await perform({ type: 'reconnect' });
     },
-    refresh: () => run(() => service.getSnapshot(), en.toastRefresh),
+    refresh: async () => {
+      await perform({ type: 'refresh' }, en.toastRefresh);
+    },
     toggleNotifications: async () => {
-      try {
-        await AsyncStorage.setItem('coopguard.notificationPreference', String(!notifications));
-        setNotifications(!notifications);
-        notify(en.toastPreference);
-      } catch {
-        notify(en.toastError);
-      }
+      await perform({ type: 'notifications', value: !data.notifications }, en.toastPreference);
     },
+    enterDemo: async () => {
+      await perform({ type: 'start' });
+    },
+    returnWelcome: async () => {
+      await perform({ type: 'welcome' });
+    },
+    saveSurvey: (value) => perform({ type: 'house', value }, en.surveySaved),
   };
   return <FarmContext.Provider value={value}>{children}</FarmContext.Provider>;
 }

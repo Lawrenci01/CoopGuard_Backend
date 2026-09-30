@@ -1,6 +1,8 @@
 import React from 'react';
 import {
   Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +13,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { ArrowUpRight, X, type LucideIcon } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts } from '../theme';
 import { en } from '../i18n/en';
 
@@ -82,14 +85,14 @@ export function Button({
       accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed, hovered }) => [
+      style={({ pressed }) => [
         styles.button,
         compact && { minHeight: 44, paddingHorizontal: 13 },
         variant === 'primary' && { backgroundColor: colors.green },
         variant === 'secondary' && { backgroundColor: colors.greenSoft },
         variant === 'danger' && { backgroundColor: colors.redSoft },
         { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 },
-        hovered && !disabled && { transform: [{ translateY: -1 }] },
+        pressed && !disabled && { transform: [{ translateY: -1 }] },
       ]}
     >
       <Label
@@ -116,10 +119,7 @@ export function IconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      style={({ hovered, pressed }) => [
-        styles.iconButton,
-        (hovered || pressed) && { backgroundColor: colors.greenSoft },
-      ]}
+      style={({ pressed }) => [styles.iconButton, pressed && { backgroundColor: colors.greenSoft }]}
     >
       <Icon size={20} color={colors.green} strokeWidth={1.7} />
     </Pressable>
@@ -161,9 +161,11 @@ export function Sheet({
   onClose,
 }: React.PropsWithChildren<{ visible: boolean; title: string; onClose: () => void }>) {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{
           flex: 1,
           backgroundColor: '#173E2E77',
@@ -186,7 +188,7 @@ export function Sheet({
             backgroundColor: colors.surface,
             borderRadius: 24,
             padding: 24,
-            paddingBottom: width < 600 ? 34 : 24,
+            paddingBottom: Math.max(insets.bottom + 16, 24),
           }}
         >
           <View style={[styles.sectionTitle, { marginBottom: 20 }]}>
@@ -203,7 +205,7 @@ export function Sheet({
             {children}
           </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

@@ -23,6 +23,7 @@ import { useFarm } from '../state/FarmProvider';
 import { Button, Card, Chip, Label, SectionTitle, styles } from '../components/ui';
 import { ScreenFrame } from '../components/ScreenFrame';
 import { BarnIllustration } from '../components/BarnIllustration';
+import { AIInsights } from '../components/AIInsights';
 import { TrendChart } from '../components/TrendChart';
 import { FloorPlan } from '../components/FloorPlan';
 import { ControlSheet, RequestStatus, SensorSheet } from '../components/FarmSheets';
@@ -30,10 +31,11 @@ import { metricUnits, trendValues } from '../data/fixtures';
 import { canRequestControl } from '../domain/policy';
 import { formatReading, summarizeReadings } from '../domain/readings';
 import type { MetricKey, Sensor, TabName } from '../domain/types';
+import { flockDay } from '../services/localFarmRepository';
 
 export function DashboardScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<Record<TabName, undefined>>>();
-  const { snapshot, context, now } = useFarm();
+  const { snapshot, context, now, data } = useFarm();
   const { width } = useWindowDimensions();
   const columns = width >= 1180;
   const [confirm, setConfirm] = useState(false),
@@ -46,7 +48,16 @@ export function DashboardScreen() {
   ];
   const requestActive = snapshot.request?.status === 'pending' || snapshot.fanStage === 'full';
   return (
-    <ScreenFrame tab="Dashboard" action={<Chip dot>{en.flock}</Chip>}>
+    <ScreenFrame
+      tab="Dashboard"
+      action={
+        <Chip dot>
+          {data.flock
+            ? `Day ${flockDay(data.flock, now)} · ${data.flock.birds.toLocaleString()} birds`
+            : 'No active flock'}
+        </Chip>
+      }
+    >
       <View style={{ flexDirection: columns ? 'row' : 'column', gap: 18 }}>
         <Card
           style={{
@@ -95,7 +106,7 @@ export function DashboardScreen() {
               </Label>
             </View>
             <Label style={{ color: '#A3947E', fontSize: 10 }}>
-              {relativeTime(snapshot.alerts[0]!.detectedAt, now)}
+              {relativeTime(snapshot.alerts[0]?.detectedAt ?? snapshot.sampledAt, now)}
             </Label>
           </View>
           <Label weight="bold" style={{ fontSize: 18, lineHeight: 25 }}>
@@ -121,7 +132,10 @@ export function DashboardScreen() {
         </Card>
       </View>
       <View>
-        <SectionTitle title={en.conditions} subtitle={en.conditionsNote} />
+        <SectionTitle
+          title={en.conditions}
+          subtitle={`From ${snapshot.sensors.filter((s) => s.online).length} reporting sensors`}
+        />
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
           {metrics.map(({ key, icon: Icon }) => {
             const summary = summarizeReadings(snapshot.sensors, key);
@@ -196,11 +210,13 @@ export function DashboardScreen() {
               <View>
                 <Label weight="bold">{en.fanSection}</Label>
                 <Label style={{ color: colors.muted, fontSize: 11 }}>
-                  {context.controlMode === 'monitor'
-                    ? en.controlMode.monitor
-                    : snapshot.fanStage === 'full'
-                      ? en.override
-                      : en.auto}
+                  {context.connection !== 'local'
+                    ? en.savedStatus
+                    : context.controlMode === 'monitor'
+                      ? en.controlMode.monitor
+                      : snapshot.fanStage === 'full'
+                        ? en.override
+                        : en.auto}
                 </Label>
               </View>
             </View>
@@ -267,13 +283,17 @@ export function DashboardScreen() {
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 20 }}>
         <View style={styles.row}>
           <Radio size={16} color={colors.muted} />
-          <Label style={{ color: colors.muted, fontSize: 12 }}>{en.sensorsReporting}</Label>
+          <Label style={{ color: colors.muted, fontSize: 12 }}>
+            {snapshot.sensors.filter((s) => s.online).length} of {snapshot.sensors.length} sensors
+            reporting
+          </Label>
         </View>
         <View style={styles.row}>
           <ShieldCheck size={16} color={colors.green} />
           <Label style={{ color: colors.muted, fontSize: 12 }}>{en.hubPower}</Label>
         </View>
       </View>
+      <AIInsights />
       <ControlSheet visible={confirm} onClose={() => setConfirm(false)} />
       <SensorSheet sensor={sensor} onClose={() => setSensor(null)} />
     </ScreenFrame>

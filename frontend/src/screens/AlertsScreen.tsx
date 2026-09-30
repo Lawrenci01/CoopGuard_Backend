@@ -11,7 +11,7 @@ import { ScreenFrame } from '../components/ScreenFrame';
 import { ControlSheet, RequestStatus, SensorSheet } from '../components/FarmSheets';
 
 export function AlertsScreen() {
-  const { snapshot, context, now, acknowledge } = useFarm();
+  const { snapshot, context, now, acknowledge, data } = useFarm();
   const [filter, setFilter] = useState('active'),
     [sensor, setSensor] = useState<Sensor | null>(null),
     [confirm, setConfirm] = useState(false);
@@ -136,7 +136,10 @@ export function AlertsScreen() {
                   variant="ghost"
                   icon={ArrowRight}
                   onPress={() =>
-                    setSensor(snapshot.sensors.find((s) => s.id === alert.sensorId) ?? null)
+                    setSensor(
+                      [...snapshot.sensors, ...data.retired].find((s) => s.id === alert.sensorId) ??
+                        null,
+                    )
                   }
                 >
                   {en.seeReadings}

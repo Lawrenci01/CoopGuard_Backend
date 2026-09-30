@@ -1,5 +1,5 @@
-import React from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import React, { useState } from 'react';
+import { RefreshControl, ScrollView, View, useWindowDimensions } from 'react-native';
 import { en, relativeTime } from '../i18n/en';
 import { colors } from '../theme';
 import type { TabName } from '../domain/types';
@@ -13,11 +13,29 @@ export function ScreenFrame({
 }: React.PropsWithChildren<{ tab: TabName; action?: React.ReactNode }>) {
   const { width } = useWindowDimensions();
   const small = width < 600;
-  const { snapshot, now } = useFarm();
+  const { snapshot, now, refresh } = useFarm();
+  const [refreshing, setRefreshing] = useState(false);
   return (
     <ScrollView
       testID={`screen-${tab.replace(' ', '-')}`}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      refreshControl={
+        <RefreshControl
+          colors={[colors.green]}
+          tintColor={colors.green}
+          refreshing={refreshing}
+          onRefresh={async () => {
+            setRefreshing(true);
+            try {
+              await refresh();
+            } finally {
+              setRefreshing(false);
+            }
+          }}
+        />
+      }
       contentContainerStyle={{ padding: small ? 18 : 32, paddingBottom: 36 }}
       style={{ flex: 1, backgroundColor: colors.background }}
     >

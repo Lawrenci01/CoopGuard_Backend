@@ -12,6 +12,16 @@ __pycache__/
 # React Native / JavaScript
 node_modules/
 .expo/
+.gradle/
+.cxx/
+local.properties
+*.keystore
+*.jks
+*.apk
+*.aab
+frontend/android/
+frontend/ios/
+build-*.log
 dist/
 build/
 !docs/reference/build/
