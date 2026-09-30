@@ -72,7 +72,7 @@ npx expo-doctor
 npm audit
 ```
 
-Domain tests exercise deadlines, permissions, data validation, durable CRUD, serialized writes, storage failures and corruption. Native component tests exercise navigation, sensor creation, inspection notes, saved acknowledgments and house setup. Decorative icons and platform storage are mocked in those component tests; installation and cold-start checks on a phone are separate evidence. See `dist/android/VERIFICATION.md` when a device run is available.
+Domain tests exercise deadlines, permissions, data validation, durable CRUD, serialized writes, storage failures and corruption. Native component tests exercise navigation, sensor creation, inspection notes, saved acknowledgments and house setup. Decorative icons and platform storage are mocked in those component tests. The standalone app was also installed and checked on a Redmi Note 9 Pro; see the [device verification report](VERIFICATION.md).
 
 ## Implementation boundaries
 
