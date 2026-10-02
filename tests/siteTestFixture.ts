@@ -6,10 +6,7 @@ import {
   trialChecks,
 } from "../src/shared/domain/siteWorkflow";
 import type { LocalFarmRepository } from "../src/shared/services/localFarmRepository";
-import {
-  pairingQr,
-  type VirtualNodeProfile,
-} from "../src/shared/domain/deviceSimulation";
+import { pairingQr } from "../src/shared/domain/deviceSimulation";
 
 export function completeSiteSurvey() {
   const survey = emptySiteSurvey();
@@ -132,15 +129,10 @@ export async function pairPlannedVirtualDevices(repo: LocalFarmRepository) {
       pairingCode: hub.pairingCode,
     }),
   });
-  for (const [profile, section] of [
-    ["climate", "A"],
-    ["control", "B"],
-    ["climate", "C"],
-  ] as [VirtualNodeProfile, "A" | "B" | "C"][]) {
+  for (const section of ["A", "B", "C"] as const) {
     state = await repo.dispatch({
       type: "createVirtualNode",
       farmCode,
-      profile,
       section,
     });
     const node = state.deviceSimulation.nodes.at(-1)!;
@@ -152,7 +144,6 @@ export async function pairPlannedVirtualDevices(repo: LocalFarmRepository) {
         farmCode,
         deviceId: node.id,
         pairingCode: node.pairingCode,
-        profile: node.profile,
       }),
     });
   }

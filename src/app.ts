@@ -203,18 +203,19 @@ export async function createApp(
     return { state, revision: farm.revision };
   }
   const workers = async (farmId: string) =>
-    (await db
-      .prepare(
-        `SELECT u.id,u.username,u.name,u.active,u.must_change FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.farm_id=? AND u.role='worker' ORDER BY u.name`,
-      )
-      .all(farmId))
-      .map((u) => ({
-        id: u.id,
-        username: u.username,
-        name: u.name,
-        active: !!u.active,
-        mustChangePassword: !!u.must_change,
-      }));
+    (
+      await db
+        .prepare(
+          `SELECT u.id,u.username,u.name,u.active,u.must_change FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.farm_id=? AND u.role='worker' ORDER BY u.name`,
+        )
+        .all(farmId)
+    ).map((u) => ({
+      id: u.id,
+      username: u.username,
+      name: u.name,
+      active: !!u.active,
+      mustChangePassword: !!u.must_change,
+    }));
   async function targetWorker(farmId: string, id: string) {
     const user = (await db
       .prepare(
@@ -224,9 +225,11 @@ export async function createApp(
     if (!user) fail(404, "Worker not found in this farm.");
     // Owners cannot change a credential that grants access outside their farm.
     if (
-      ((await db
-        .prepare("SELECT COUNT(*) AS n FROM memberships WHERE user_id=?")
-        .get(id))?.n as number) !== 1
+      ((
+        await db
+          .prepare("SELECT COUNT(*) AS n FROM memberships WHERE user_id=?")
+          .get(id)
+      )?.n as number) !== 1
     )
       fail(403, "Contact the CoopGuard team to manage this account.");
     return user;
@@ -270,7 +273,9 @@ export async function createApp(
           .get(key)) as { count: number; until_at: number } | undefined;
       if (attempt && attempt.count >= 10 && attempt.until_at > now())
         fail(429, "Too many sign-in attempts. Try again in 15 minutes.");
-      await db.prepare("DELETE FROM login_attempts WHERE until_at<=?").run(now());
+      await db
+        .prepare("DELETE FROM login_attempts WHERE until_at<=?")
+        .run(now());
       // Count before expensive work so concurrent requests cannot skip the limit.
       await db
         .prepare(
@@ -299,14 +304,12 @@ export async function createApp(
       return await issue(fresh);
     },
   );
-  app.get("/v1/me", async (request) =>
-    identity(await account(request, false)),
-  );
+  app.get("/v1/me", async (request) => identity(await account(request, false)));
   app.post("/v1/auth/logout", async (request) => {
     const user = await account(request, false);
-    await db.prepare("DELETE FROM sessions WHERE digest=?").run(
-      digest(request.headers.authorization!.slice(7)),
-    );
+    await db
+      .prepare("DELETE FROM sessions WHERE digest=?")
+      .run(digest(request.headers.authorization!.slice(7)));
     await audit(user, null, "logout");
     return { ok: true };
   });
@@ -354,7 +357,10 @@ export async function createApp(
       const { user, farmId } = await access(request),
         body = parse(mutationSchema, request.body);
       const action = body.action as LocalAction;
-      if (action.type === "createVirtualHub" || action.type === "createVirtualNode") {
+      if (
+        action.type === "createVirtualHub" ||
+        action.type === "createVirtualNode"
+      ) {
         const target = (await db
           .prepare("SELECT code FROM farm_codes WHERE farm_id=?")
           .get(farmId)) as { code: string } | undefined;
@@ -378,6 +384,7 @@ export async function createApp(
           "createVirtualNode",
           "pairVirtualDevice",
           "removeVirtualDevice",
+          "updateVirtualFirmware",
         ].includes(action.type) &&
         user.role !== "technician"
       )
@@ -500,10 +507,9 @@ export async function createApp(
         n.authorName = user.name;
       });
       if (state.flock?.id === "flock-1") state.flock = null;
-      await db.prepare("UPDATE farms SET state=?,revision=1 WHERE id=?").run(
-        JSON.stringify(state),
-        farmId,
-      );
+      await db
+        .prepare("UPDATE farms SET state=?,revision=1 WHERE id=?")
+        .run(JSON.stringify(state), farmId);
       await audit(user, farmId, "phone_records_imported");
       return { state, revision: 1 };
     }),
@@ -524,7 +530,11 @@ export async function createApp(
       const hash = await hashPassword(body.temporaryPassword);
       const { user } = await access(request, ["owner"]),
         id = randomUUID();
-      if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(body.username))
+      if (
+        await db
+          .prepare("SELECT 1 FROM users WHERE username=?")
+          .get(body.username)
+      )
         fail(409, "This username is unavailable.");
       await db.batch([
         {
@@ -548,14 +558,17 @@ export async function createApp(
       z.object({ name, active: z.boolean() }).strict(),
       request.body,
     );
-    await db.prepare("UPDATE users SET name=?,active=? WHERE id=?").run(
-      body.name,
-      Number(body.active),
-      id,
-    );
+    await db
+      .prepare("UPDATE users SET name=?,active=? WHERE id=?")
+      .run(body.name, Number(body.active), id);
     if (!body.active)
       await db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
-    await audit(user, farmId, body.active ? "worker_updated" : "worker_disabled", id);
+    await audit(
+      user,
+      farmId,
+      body.active ? "worker_updated" : "worker_disabled",
+      id,
+    );
     return await workers(farmId);
   });
   app.post(

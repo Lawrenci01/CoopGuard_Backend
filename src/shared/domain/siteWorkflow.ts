@@ -366,9 +366,9 @@ export function emptySiteSurvey(house?: HouseSurveyDraft | null): SiteSurvey {
       plannedNodes: 0,
       temperature: true,
       humidity: true,
-      ammonia: false,
-      co2: false,
-      litterMoisture: false,
+      ammonia: true,
+      co2: true,
+      litterMoisture: true,
       microphone: false,
       placementNotes: "",
     },
@@ -440,14 +440,6 @@ export function surveyMissing(s: SiteSurvey): string[] {
   if (!clean(s.connectivity.region))
     missing.push("Country or region for radio review");
   if (s.sensors.plannedNodes < 1) missing.push("Planned node count");
-  if (
-    !s.sensors.temperature &&
-    !s.sensors.humidity &&
-    !s.sensors.ammonia &&
-    !s.sensors.co2 &&
-    !s.sensors.litterMoisture
-  )
-    missing.push("At least one environmental measurement");
   if (!clean(s.sensors.placementNotes))
     missing.push("Node locations, heights and power sources");
   if (!clean(s.operations.dayResponder))
@@ -536,11 +528,11 @@ export function buildInstallationPlan(
       "The recorded operating preference is monitoring or undecided.",
     );
   const metrics = [
-    s.sensors.temperature && "Temperature",
-    s.sensors.humidity && "Humidity",
-    s.sensors.ammonia && "Ammonia",
-    s.sensors.co2 && "Carbon dioxide",
-    s.sensors.litterMoisture && "Litter moisture",
+    "Temperature",
+    "Humidity",
+    "Ammonia",
+    "Carbon dioxide",
+    "Litter moisture",
     s.sensors.microphone && s.ai.audioConsent === "yes" && "Sound collection",
   ].filter((v): v is string => !!v);
   return {
@@ -661,15 +653,7 @@ export function siteStatusLabel(status: SiteStatus) {
 }
 
 export function enabledMetrics(site: SiteWorkflow): MetricKey[] {
-  if (!site.survey)
-    return ["temperature", "humidity", "ammonia", "co2", "moisture"];
-  const selected: MetricKey[] = [];
-  if (site.survey.sensors.temperature) selected.push("temperature");
-  if (site.survey.sensors.humidity) selected.push("humidity");
-  if (site.survey.sensors.ammonia) selected.push("ammonia");
-  if (site.survey.sensors.co2) selected.push("co2");
-  if (site.survey.sensors.litterMoisture) selected.push("moisture");
-  return selected;
+  return ["temperature", "humidity", "ammonia", "co2", "moisture"];
 }
 
 export function validSiteSurvey(value: unknown): value is SiteSurvey {

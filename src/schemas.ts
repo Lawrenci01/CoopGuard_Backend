@@ -113,7 +113,6 @@ export const actionSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("createVirtualNode"),
       farmCode: z.string().regex(/^CG-[A-Z0-9-]{4,32}$/),
-      profile: z.enum(["climate", "air_quality", "sound", "control"]),
       section,
     })
     .strict(),
@@ -124,6 +123,7 @@ export const actionSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("removeVirtualDevice"), id }).strict(),
+  z.object({ type: z.literal("updateVirtualFirmware"), id }).strict(),
 ]);
 export const mutationSchema = z
   .object({

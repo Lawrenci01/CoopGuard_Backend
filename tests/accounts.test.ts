@@ -11,6 +11,7 @@ import { seedLocalFarm } from "../src/shared/services/localFarmRepository";
 import type { Session } from "../src/apiTypes";
 import { completeSiteSurvey } from "./siteTestFixture";
 import { reprovisionFarmAccounts } from "../src/accountAdmin";
+import { pairingQr } from "../src/shared/domain/deviceSimulation";
 
 test("public tunnel requests are remote while private farm hosts are local", () => {
   assert.equal(connectionForHeaders({ host: "192.168.8.36:8443" }), "local");
@@ -60,12 +61,28 @@ test("farm reprovision revokes old accounts while preserving the farm", async (t
   );
   assert.equal(result.farmId, farmId);
   assert.equal(result.credentials.length, 2);
-  assert.equal(await db.prepare("SELECT 1 FROM users WHERE id=?").get("old-owner"), undefined);
-  assert.ok(await db.prepare("SELECT 1 FROM users WHERE username=?").get("old.owner"));
-  assert.equal(await db.prepare("SELECT 1 FROM sessions WHERE digest=?").get("old-session"), undefined);
-  assert.equal((await db.prepare("SELECT COUNT(*) n FROM farms WHERE id=?").get(farmId))!.n, 1);
   assert.equal(
-    (await db.prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?").get(farmId))!.n,
+    await db.prepare("SELECT 1 FROM users WHERE id=?").get("old-owner"),
+    undefined,
+  );
+  assert.ok(
+    await db.prepare("SELECT 1 FROM users WHERE username=?").get("old.owner"),
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT 1 FROM sessions WHERE digest=?")
+      .get("old-session"),
+    undefined,
+  );
+  assert.equal(
+    (await db.prepare("SELECT COUNT(*) n FROM farms WHERE id=?").get(farmId))!
+      .n,
+    1,
+  );
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?")
+      .get(farmId))!.n,
     2,
   );
 });
@@ -503,18 +520,59 @@ test("shared accounts, farm permissions, offline replay and durable records", as
         );
         assert.equal(r.statusCode, 200, r.body);
         revision = r.json().revision;
+        const farmCode = owner.farms.find((item) => item.id === farm)!.code;
+        r = await mutate(
+          tech.token,
+          { type: "createVirtualHub", farmCode },
+          revision,
+        );
+        assert.equal(r.statusCode, 200, r.body);
+        revision = r.json().revision;
+        let state = r.json().state;
+        const hub = state.deviceSimulation.hub!;
         r = await mutate(
           tech.token,
           {
-            type: "addSensor",
-            section: "A",
-            control: false,
-            tested: true,
-            calibrated: true,
+            type: "pairVirtualDevice",
+            qr: pairingQr({
+              version: 1,
+              kind: "hub",
+              farmCode,
+              deviceId: hub.id,
+              pairingCode: hub.pairingCode,
+            }),
           },
           revision,
         );
         assert.equal(r.statusCode, 200, r.body);
+        revision = r.json().revision;
+        for (const section of ["A", "B", "C"] as const) {
+          r = await mutate(
+            tech.token,
+            { type: "createVirtualNode", farmCode, section },
+            revision,
+          );
+          assert.equal(r.statusCode, 200, r.body);
+          revision = r.json().revision;
+          state = r.json().state;
+          const node = state.deviceSimulation.nodes.at(-1)!;
+          r = await mutate(
+            tech.token,
+            {
+              type: "pairVirtualDevice",
+              qr: pairingQr({
+                version: 1,
+                kind: "node",
+                farmCode,
+                deviceId: node.id,
+                pairingCode: node.pairingCode,
+              }),
+            },
+            revision,
+          );
+          assert.equal(r.statusCode, 200, r.body);
+          revision = r.json().revision;
+        }
         await app.close();
         db.close();
         db = await openDatabase(path);
@@ -524,7 +582,15 @@ test("shared accounts, farm permissions, offline replay and durable records", as
         assert.equal(saved.json().state.house.houseName, "West house");
         assert.equal(saved.json().state.site.status, "installing");
         assert.equal(saved.json().state.flock.birds, 450);
-        assert.equal(saved.json().state.snapshot.sensors.length, 13);
+        assert.equal(saved.json().state.snapshot.sensors.length, 3);
+        assert.deepEqual(
+          saved
+            .json()
+            .state.snapshot.sensors.map(
+              (sensor: { section: string }) => sensor.section,
+            ),
+          ["A", "B", "C"],
+        );
         assert.equal(
           saved.json().state.inspections[0].text,
           "Owner checked the note.",

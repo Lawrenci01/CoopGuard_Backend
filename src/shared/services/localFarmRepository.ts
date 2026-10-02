@@ -40,9 +40,10 @@ import {
   deviceSetupProgress,
   emptyDeviceSimulation,
   parsePairingQr,
+  recordDeviceEvent,
+  snapshotForDeviceSimulation,
   validDeviceSimulation,
   type DeviceSimulation,
-  type VirtualNodeProfile,
 } from "../domain/deviceSimulation";
 
 export const LOCAL_FARM_KEY = "coopguard.localFarm.v1";
@@ -115,11 +116,11 @@ export type LocalAction =
   | {
       type: "createVirtualNode";
       farmCode: string;
-      profile: VirtualNodeProfile;
       section: Section;
     }
   | { type: "pairVirtualDevice"; qr: string }
   | { type: "removeVirtualDevice"; id: string }
+  | { type: "updateVirtualFirmware"; id: string }
   | { type: "ack"; id: string }
   | {
       type: "addSensor";
@@ -531,9 +532,7 @@ export class LocalFarmRepository {
       case "createVirtualHub": {
         requireTechnicianRole();
         if (!s.site.survey || !s.site.plan)
-          throw new Error(
-            "Complete the survey before creating the farm hub.",
-          );
+          throw new Error("Complete the survey before creating the farm hub.");
         if (s.deviceSimulation.hub?.status === "reporting")
           throw new Error(
             "Remove the paired virtual hub before creating another one.",
@@ -549,6 +548,7 @@ export class LocalFarmRepository {
             .padEnd(12, "0"),
           status: "created",
           createdAt: now,
+          firmwareVersion: "0.1.0-sim",
         };
         s.deviceSimulation.nodes = [];
         break;
@@ -569,10 +569,10 @@ export class LocalFarmRepository {
             .slice(2, 14)
             .toUpperCase()
             .padEnd(12, "0"),
-          profile: a.profile,
           section: a.section,
           status: "created",
           createdAt: now,
+          firmwareVersion: "0.1.0-sim",
         });
         break;
       }
@@ -601,8 +601,7 @@ export class LocalFarmRepository {
             hub.status !== "reporting" ||
             !node ||
             node.farmCode !== payload.farmCode ||
-            node.pairingCode !== payload.pairingCode ||
-            node.profile !== payload.profile
+            node.pairingCode !== payload.pairingCode
           )
             throw new Error(
               "This node QR does not belong to the selected farm or hub.",
@@ -632,6 +631,32 @@ export class LocalFarmRepository {
             throw new Error("The virtual device was not found.");
         }
         break;
+      case "updateVirtualFirmware": {
+        requireTechnicianRole();
+        const device =
+          s.deviceSimulation.hub?.id === a.id
+            ? s.deviceSimulation.hub
+            : s.deviceSimulation.nodes.find((node) => node.id === a.id);
+        if (!device || device.status !== "reporting")
+          throw new Error(
+            "Only a reporting device can receive a simulated firmware update.",
+          );
+        const version = device.firmwareVersion ?? "0.1.0-sim";
+        const parts = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+        const nextVersion = parts
+          ? `${parts[1]}.${parts[2]}.${Number(parts[3]) + 1}-sim`
+          : "0.1.1-sim";
+        device.firmwareVersion = nextVersion;
+        device.firmwareUpdatedAt = now;
+        recordDeviceEvent(s.deviceSimulation, {
+          id: id("device-history"),
+          deviceId: a.id,
+          action: "firmware_updated",
+          details: `Simulated firmware updated to ${nextVersion}.`,
+          createdAt: now,
+        });
+        break;
+      }
       case "ack":
         s.snapshot = await engine.acknowledge(a.id, s.context);
         break;
@@ -661,7 +686,12 @@ export class LocalFarmRepository {
         break;
       case "addSensor": {
         requireTechnician();
+        if (s.site.survey)
+          throw new Error(
+            "Add a surveyed-farm node through hub pairing, not the sample sensor form.",
+          );
         if (
+          s.site.status !== "not_started" &&
           ![
             "installing",
             "commissioning",
@@ -700,7 +730,8 @@ export class LocalFarmRepository {
         break;
       }
       case "moveSensor": {
-        requireTechnician();
+        if (s.site.survey) requireTechnicianRole();
+        else requireTechnician();
         const sensor = s.snapshot.sensors.find((n) => n.id === a.id);
         if (
           !sensor ||
@@ -715,6 +746,17 @@ export class LocalFarmRepository {
         )
           throw new Error("Choose a position inside the selected section.");
         Object.assign(sensor, { section: a.section, x: a.x, y: a.y });
+        const node = s.deviceSimulation.nodes.find((item) => item.id === a.id);
+        if (node) {
+          Object.assign(node, { section: a.section, x: a.x, y: a.y });
+          recordDeviceEvent(s.deviceSimulation, {
+            id: id("device-history"),
+            deviceId: node.id,
+            action: "configured",
+            details: `Node placement saved in Section ${a.section}.`,
+            createdAt: now,
+          });
+        }
         break;
       }
       case "retireSensor": {
@@ -725,10 +767,14 @@ export class LocalFarmRepository {
           throw new Error("Keep at least one sensor in the sample house.");
         s.retired.push(sensor);
         s.snapshot.sensors = s.snapshot.sensors.filter((n) => n.id !== a.id);
+        s.deviceSimulation.nodes = s.deviceSimulation.nodes.filter(
+          (node) => node.id !== a.id,
+        );
         break;
       }
       case "calibrate":
-        requireTechnician();
+        if (s.site.survey) requireTechnicianRole();
+        else requireTechnician();
         if (
           ![
             "commissioning",
@@ -743,6 +789,14 @@ export class LocalFarmRepository {
         if (!s.snapshot.sensors.some((n) => n.id === a.id && n.online))
           throw new Error("Choose a reporting sensor.");
         s.calibration[a.id] = now;
+        if (s.deviceSimulation.nodes.some((node) => node.id === a.id))
+          recordDeviceEvent(s.deviceSimulation, {
+            id: id("device-history"),
+            deviceId: a.id,
+            action: "calibrated",
+            details: "Simulated sensor calibration recorded.",
+            createdAt: now,
+          });
         break;
       case "startFlock":
         requireManager();
@@ -822,5 +876,11 @@ export class LocalFarmRepository {
         s.people = s.people.filter((p) => p.id !== a.id);
         break;
     }
+    if (
+      s.site.survey ||
+      s.deviceSimulation.hub ||
+      s.deviceSimulation.nodes.length
+    )
+      s.snapshot = snapshotForDeviceSimulation(s.snapshot, s.deviceSimulation);
   }
 }
