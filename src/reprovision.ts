@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { reprovisionFarmAccounts } from "./accountAdmin";
-import { openDatabase } from "./database";
+import { farmCode, openDatabase } from "./database";
 import { databasePath, localDir, turso } from "./config";
 import { username as usernameSchema } from "./schemas";
 
@@ -53,7 +53,7 @@ try {
     .join("\n\n");
   writeFileSync(
     output,
-    `CoopGuard ${result.farmCreated ? "initial cloud" : "replacement"} credentials - keep private\n\nFarm: ${farmName}\nFarm ID: ${result.farmId}\n\n${body}\n\nChange each temporary password at first sign-in. ${result.farmCreated ? "A new cloud farm was created because the Turso database was empty." : "Old farm memberships and sessions were removed. Farm setup and records were preserved."}\n`,
+    `CoopGuard ${result.farmCreated ? "initial cloud" : "replacement"} credentials - keep private\n\nFarm: ${farmName}\nFarm ID: ${farmCode(result.farmId)}\n\n${body}\n\nChange each temporary password at first sign-in. ${result.farmCreated ? "A new cloud farm was created because the Turso database was empty." : "Old farm memberships and sessions were removed. Farm setup and records were preserved."}\n`,
     { encoding: "utf8", mode: 0o600, flag: "wx" },
   );
   console.log(

@@ -1,6 +1,6 @@
 # CoopGuard backend
 
-Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.6.0 uses Turso on Render Free, assigns each farm a unique Farm ID, stores the simulated QR device workflow, and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Sensors, history, equipment responses and virtual device heartbeats remain samples.
+Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.6.1 uses Turso on Render Free, assigns each farm a unique Farm ID, stores the simulated QR device workflow, and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Sensors, history, equipment responses and virtual device heartbeats remain samples.
 
 ## Deploy on Render
 

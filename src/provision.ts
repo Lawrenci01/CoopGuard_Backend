@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
-import { createFarm, openDatabase } from "./database";
+import { createFarm, farmCode, openDatabase } from "./database";
 import { hashPassword, temporaryPassword } from "./passwords";
 import { username as usernameSchema } from "./schemas";
 import { databasePath, localDir, turso } from "./config";
@@ -76,7 +76,7 @@ if (values["reset-user"]) {
     });
   }
   const farmId = await createFarm(db, values.farm.trim());
-  credentials.push(`Farm: ${values.farm.trim()}\nFarm ID: ${farmId}`);
+  credentials.push(`Farm: ${values.farm.trim()}\nFarm ID: ${farmCode(farmId)}`);
   await db.batch(
     entries.flatMap((entry) => [
       {
