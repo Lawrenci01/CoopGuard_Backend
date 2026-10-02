@@ -1,7 +1,6 @@
 import Fastify, { type FastifyRequest } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import type { ServerOptions } from "node:https";
 import { z } from "zod";
 import { hashPassword, verifyPassword, temporaryPassword } from "./passwords";
@@ -16,6 +15,7 @@ import {
 import { surveyRecommendation } from "./shared/domain/setup";
 import type { Role } from "./shared/domain/types";
 import type { FarmResponse, Identity, Session } from "./apiTypes";
+import type { BatchStatement, CoopDatabase } from "./database";
 
 type User = {
   id: string;
@@ -68,7 +68,7 @@ const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
 };
 
 export async function createApp(
-  db: DatabaseSync,
+  db: CoopDatabase,
   options: {
     clock?: () => number;
     https?: ServerOptions;
@@ -91,18 +91,22 @@ export async function createApp(
     queue = result.catch(() => {});
     return result;
   };
-  const audit = (
+  const auditStatement = (
     user: User,
     farm: string | null,
     event: string,
     target: string | null = null,
-  ) =>
-    db
-      .prepare(
-        "INSERT INTO audit(user_id,farm_id,event,target_id,at) VALUES(?,?,?,?,?)",
-      )
-      .run(user.id, farm, event, target, now());
-  function identity(user: User): Identity {
+  ): BatchStatement => ({
+    sql: "INSERT INTO audit(user_id,farm_id,event,target_id,at) VALUES(?,?,?,?,?)",
+    args: [user.id, farm, event, target, now()],
+  });
+  const audit = async (
+    user: User,
+    farm: string | null,
+    event: string,
+    target: string | null = null,
+  ) => db.batch([auditStatement(user, farm, event, target)]);
+  async function identity(user: User): Promise<Identity> {
     return {
       account: {
         id: user.id,
@@ -111,57 +115,63 @@ export async function createApp(
         role: user.role,
         mustChangePassword: !!user.must_change,
       },
-      farms: db
+      farms: (await db
         .prepare(
           "SELECT f.id,f.name FROM farms f JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
         )
-        .all(user.id) as { id: string; name: string }[],
+        .all(user.id)) as { id: string; name: string }[],
     };
   }
-  function issue(user: User): Session {
+  async function issue(user: User): Promise<Session> {
     const token = randomBytes(32).toString("base64url"),
       expiresAt = now() + 7 * 86_400_000;
-    db.prepare("DELETE FROM sessions WHERE expires_at<=?").run(now());
-    db.prepare(
-      "INSERT INTO sessions(digest,user_id,expires_at) VALUES(?,?,?)",
-    ).run(digest(token), user.id, expiresAt);
-    return { ...identity(user), token, expiresAt };
+    await db.batch([
+      { sql: "DELETE FROM sessions WHERE expires_at<=?", args: [now()] },
+      {
+        sql: "INSERT INTO sessions(digest,user_id,expires_at) VALUES(?,?,?)",
+        args: [digest(token), user.id, expiresAt],
+      },
+    ]);
+    return { ...(await identity(user)), token, expiresAt };
   }
-  function account(request: FastifyRequest, complete = true): User {
+  async function account(
+    request: FastifyRequest,
+    complete = true,
+  ): Promise<User> {
     const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(
       request.headers.authorization ?? "",
     )?.[1];
     if (!token) fail(401, "Sign in to continue.");
-    const user = db
+    const user = (await db
       .prepare(
         "SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.digest=? AND s.expires_at>? AND u.active=1",
       )
-      .get(digest(token), now()) as User | undefined;
+      .get(digest(token), now())) as User | undefined;
     if (!user) fail(401, "Your session has ended. Sign in again.");
     if (complete && user.must_change)
       fail(403, "Change your temporary password first.");
     return user;
   }
-  function access(
+  async function access(
     request: FastifyRequest,
     roles: Role[] = ["owner", "worker", "technician"],
   ) {
-    const user = account(request);
+    const user = await account(request);
     const farmId = (request.params as { farmId?: string }).farmId;
     if (
       !farmId ||
       !roles.includes(user.role) ||
-      !db
+      !(await db
         .prepare("SELECT 1 FROM memberships WHERE user_id=? AND farm_id=?")
-        .get(user.id, farmId)
+        .get(user.id, farmId))
     )
       fail(403, "You do not have access to this action or farm.");
     return { user, farmId };
   }
-  function row(farmId: string) {
-    const farm = db
+  async function row(farmId: string) {
+    const farm = (await db
       .prepare("SELECT state,revision FROM farms WHERE id=?")
-      .get(farmId) as { state: string; revision: number } | undefined;
+      .get(farmId)) as { state: string; revision: number } | undefined;
     if (!farm) fail(404, "Farm not found.");
     return farm;
   }
@@ -170,7 +180,7 @@ export async function createApp(
     user: User,
     request: FastifyRequest,
   ): Promise<FarmResponse> {
-    const farm = row(farmId);
+    const farm = await row(farmId);
     const repo = new LocalFarmRepository(
       {
         getItem: async () => farm.state,
@@ -190,12 +200,12 @@ export async function createApp(
     state.started = true;
     return { state, revision: farm.revision };
   }
-  const workers = (farmId: string) =>
-    db
+  const workers = async (farmId: string) =>
+    (await db
       .prepare(
         `SELECT u.id,u.username,u.name,u.active,u.must_change FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.farm_id=? AND u.role='worker' ORDER BY u.name`,
       )
-      .all(farmId)
+      .all(farmId))
       .map((u) => ({
         id: u.id,
         username: u.username,
@@ -203,18 +213,18 @@ export async function createApp(
         active: !!u.active,
         mustChangePassword: !!u.must_change,
       }));
-  function targetWorker(farmId: string, id: string) {
-    const user = db
+  async function targetWorker(farmId: string, id: string) {
+    const user = (await db
       .prepare(
         `SELECT u.* FROM users u JOIN memberships m ON m.user_id=u.id WHERE u.id=? AND m.farm_id=? AND u.role='worker'`,
       )
-      .get(id, farmId) as User | undefined;
+      .get(id, farmId)) as User | undefined;
     if (!user) fail(404, "Worker not found in this farm.");
     // Owners cannot change a credential that grants access outside their farm.
     if (
-      (db
+      ((await db
         .prepare("SELECT COUNT(*) AS n FROM memberships WHERE user_id=?")
-        .get(id)?.n as number) !== 1
+        .get(id))?.n as number) !== 1
     )
       fail(403, "Contact the CoopGuard team to manage this account.");
     return user;
@@ -236,7 +246,7 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.4.1",
+    version: "0.4.2",
     readings: "sample",
   }));
   app.post(
@@ -248,26 +258,28 @@ export async function createApp(
         request.body,
       );
       const key = digest(body.username),
-        attempt = db
+        attempt = (await db
           .prepare("SELECT count,until_at FROM login_attempts WHERE key=?")
-          .get(key) as { count: number; until_at: number } | undefined;
+          .get(key)) as { count: number; until_at: number } | undefined;
       if (attempt && attempt.count >= 10 && attempt.until_at > now())
         fail(429, "Too many sign-in attempts. Try again in 15 minutes.");
-      db.prepare("DELETE FROM login_attempts WHERE until_at<=?").run(now());
+      await db.prepare("DELETE FROM login_attempts WHERE until_at<=?").run(now());
       // Count before expensive work so concurrent requests cannot skip the limit.
-      db.prepare(
-        "INSERT INTO login_attempts(key,count,until_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1",
-      ).run(key, now() + 15 * 60_000);
-      const user = db
+      await db
+        .prepare(
+          "INSERT INTO login_attempts(key,count,until_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1",
+        )
+        .run(key, now() + 15 * 60_000);
+      const user = (await db
         .prepare("SELECT * FROM users WHERE username=?")
-        .get(body.username) as User | undefined;
+        .get(body.username)) as User | undefined;
       const valid = await verifyPassword(
         body.password,
         user?.password_hash ?? dummyHash,
       );
       const fresh =
         user &&
-        (db.prepare("SELECT * FROM users WHERE id=?").get(user.id) as
+        ((await db.prepare("SELECT * FROM users WHERE id=?").get(user.id)) as
           User | undefined);
       if (
         !valid ||
@@ -275,25 +287,27 @@ export async function createApp(
         fresh.password_hash !== user?.password_hash
       )
         fail(401, "Incorrect username or password.");
-      db.prepare("DELETE FROM login_attempts WHERE key=?").run(key);
-      audit(fresh, null, "login");
-      return issue(fresh);
+      await db.prepare("DELETE FROM login_attempts WHERE key=?").run(key);
+      await audit(fresh, null, "login");
+      return await issue(fresh);
     },
   );
-  app.get("/v1/me", async (request) => identity(account(request, false)));
+  app.get("/v1/me", async (request) =>
+    identity(await account(request, false)),
+  );
   app.post("/v1/auth/logout", async (request) => {
-    const user = account(request, false);
-    db.prepare("DELETE FROM sessions WHERE digest=?").run(
+    const user = await account(request, false);
+    await db.prepare("DELETE FROM sessions WHERE digest=?").run(
       digest(request.headers.authorization!.slice(7)),
     );
-    audit(user, null, "logout");
+    await audit(user, null, "logout");
     return { ok: true };
   });
   app.post(
     "/v1/auth/password",
     { config: { rateLimit: { max: 6, timeWindow: "1 minute" } } },
     async (request) => {
-      const user = account(request, false);
+      const user = await account(request, false);
       const body = parse(
         z
           .object({
@@ -308,26 +322,29 @@ export async function createApp(
       if (body.currentPassword === body.newPassword)
         fail(400, "Choose a different password.");
       const hash = await hashPassword(body.newPassword);
-      const fresh = account(request, false);
+      const fresh = await account(request, false);
       if (fresh.password_hash !== user.password_hash)
         fail(409, "The password changed. Sign in again.");
-      db.prepare(
-        "UPDATE users SET password_hash=?,must_change=0 WHERE id=?",
-      ).run(hash, user.id);
-      db.prepare("DELETE FROM sessions WHERE user_id=?").run(user.id);
-      audit(user, null, "password_changed");
-      return issue({ ...fresh, must_change: 0, password_hash: hash });
+      await db.batch([
+        {
+          sql: "UPDATE users SET password_hash=?,must_change=0 WHERE id=?",
+          args: [hash, user.id],
+        },
+        { sql: "DELETE FROM sessions WHERE user_id=?", args: [user.id] },
+        auditStatement(user, null, "password_changed"),
+      ]);
+      return await issue({ ...fresh, must_change: 0, password_hash: hash });
     },
   );
   app.get("/v1/farms/:farmId", (request) =>
     serial(async () => {
-      const { user, farmId } = access(request);
+      const { user, farmId } = await access(request);
       return readFarm(farmId, user, request);
     }),
   );
   app.post("/v1/farms/:farmId/actions", (request) =>
     serial(async () => {
-      const { user, farmId } = access(request),
+      const { user, farmId } = await access(request),
         body = parse(mutationSchema, request.body);
       const action = body.action as LocalAction;
       if (
@@ -355,7 +372,7 @@ export async function createApp(
       if (action.type === "house" && user.role !== "technician")
         fail(403, "Only a technician can complete or change the site survey.");
       const fingerprint = digest(JSON.stringify(body.action));
-      const duplicate = db
+      const duplicate = await db
         .prepare(
           "SELECT body_hash FROM mutations WHERE farm_id=? AND user_id=? AND key=?",
         )
@@ -365,7 +382,7 @@ export async function createApp(
           fail(409, "This request identifier was already used.");
         return readFarm(farmId, user, request);
       }
-      const farm = row(farmId),
+      const farm = await row(farmId),
         before = JSON.parse(farm.state) as LocalFarmState;
       const appendNote = action.type === "saveInspection" && !action.id;
       if (
@@ -416,33 +433,30 @@ export async function createApp(
           authorId: user.id,
           authorName: user.name,
         });
-      access(request);
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        db.prepare(
-          "UPDATE farms SET state=?,revision=revision+1 WHERE id=?",
-        ).run(JSON.stringify(state), farmId);
-        db.prepare(
-          "INSERT INTO mutations(farm_id,user_id,key,body_hash) VALUES(?,?,?,?)",
-        ).run(farmId, user.id, body.key, fingerprint);
-        audit(user, farmId, action.type);
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+      await access(request);
+      await db.batch([
+        {
+          sql: "UPDATE farms SET state=?,revision=revision+1 WHERE id=?",
+          args: [JSON.stringify(state), farmId],
+        },
+        {
+          sql: "INSERT INTO mutations(farm_id,user_id,key,body_hash) VALUES(?,?,?,?)",
+          args: [farmId, user.id, body.key, fingerprint],
+        },
+        auditStatement(user, farmId, action.type),
+      ]);
       return { state, revision: farm.revision + 1 };
     }),
   );
   app.post("/v1/farms/:farmId/import", (request) =>
     serial(async () => {
-      const { user, farmId } = access(request, ["technician"]);
+      const { user, farmId } = await access(request, ["technician"]);
       if (requestConnection(request) !== "local")
         fail(
           403,
           "Import previous phone records while connected on the farm WiFi.",
         );
-      if (row(farmId).revision !== 0)
+      if ((await row(farmId)).revision !== 0)
         fail(
           409,
           "Import is only available before this farm has saved changes.",
@@ -468,87 +482,86 @@ export async function createApp(
         n.authorName = user.name;
       });
       if (state.flock?.id === "flock-1") state.flock = null;
-      db.prepare("UPDATE farms SET state=?,revision=1 WHERE id=?").run(
+      await db.prepare("UPDATE farms SET state=?,revision=1 WHERE id=?").run(
         JSON.stringify(state),
         farmId,
       );
-      audit(user, farmId, "phone_records_imported");
+      await audit(user, farmId, "phone_records_imported");
       return { state, revision: 1 };
     }),
   );
   app.get("/v1/farms/:farmId/workers", async (request) => {
-    const { farmId } = access(request, ["owner"]);
-    return workers(farmId);
+    const { farmId } = await access(request, ["owner"]);
+    return await workers(farmId);
   });
   app.post(
     "/v1/farms/:farmId/workers",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request) => {
-      const { farmId } = access(request, ["owner"]);
+      const { farmId } = await access(request, ["owner"]);
       const body = parse(
         z.object({ username, name, temporaryPassword: password }).strict(),
         request.body,
       );
       const hash = await hashPassword(body.temporaryPassword);
-      const { user } = access(request, ["owner"]),
+      const { user } = await access(request, ["owner"]),
         id = randomUUID();
-      if (db.prepare("SELECT 1 FROM users WHERE username=?").get(body.username))
+      if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(body.username))
         fail(409, "This username is unavailable.");
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        db.prepare(
-          "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'worker',?,?)",
-        ).run(id, body.username, body.name, hash, now());
-        db.prepare("INSERT INTO memberships(user_id,farm_id) VALUES(?,?)").run(
-          id,
-          farmId,
-        );
-        audit(user, farmId, "worker_created", id);
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-      return workers(farmId);
+      await db.batch([
+        {
+          sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'worker',?,?)",
+          args: [id, body.username, body.name, hash, now()],
+        },
+        {
+          sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+          args: [id, farmId],
+        },
+        auditStatement(user, farmId, "worker_created", id),
+      ]);
+      return await workers(farmId);
     },
   );
   app.patch("/v1/farms/:farmId/workers/:id", async (request) => {
-    const { user, farmId } = access(request, ["owner"]),
+    const { user, farmId } = await access(request, ["owner"]),
       id = (request.params as { id: string }).id;
-    targetWorker(farmId, id);
+    await targetWorker(farmId, id);
     const body = parse(
       z.object({ name, active: z.boolean() }).strict(),
       request.body,
     );
-    db.prepare("UPDATE users SET name=?,active=? WHERE id=?").run(
+    await db.prepare("UPDATE users SET name=?,active=? WHERE id=?").run(
       body.name,
       Number(body.active),
       id,
     );
     if (!body.active)
-      db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
-    audit(user, farmId, body.active ? "worker_updated" : "worker_disabled", id);
-    return workers(farmId);
+      await db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
+    await audit(user, farmId, body.active ? "worker_updated" : "worker_disabled", id);
+    return await workers(farmId);
   });
   app.post(
     "/v1/farms/:farmId/workers/:id/password",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request) => {
-      const { farmId } = access(request, ["owner"]),
+      const { farmId } = await access(request, ["owner"]),
         id = (request.params as { id: string }).id;
-      targetWorker(farmId, id);
+      await targetWorker(farmId, id);
       const body = parse(
           z.object({ temporaryPassword: password }).strict(),
           request.body,
         ),
         hash = await hashPassword(body.temporaryPassword);
-      const { user } = access(request, ["owner"]);
-      targetWorker(farmId, id);
-      db.prepare(
-        "UPDATE users SET password_hash=?,must_change=1 WHERE id=?",
-      ).run(hash, id);
-      db.prepare("DELETE FROM sessions WHERE user_id=?").run(id);
-      audit(user, farmId, "worker_password_reset", id);
+      const { user } = await access(request, ["owner"]);
+      await targetWorker(farmId, id);
+      await db.batch([
+        {
+          sql: "UPDATE users SET password_hash=?,must_change=1 WHERE id=?",
+          args: [hash, id],
+        },
+        { sql: "DELETE FROM sessions WHERE user_id=?", args: [id] },
+        auditStatement(user, farmId, "worker_password_reset", id),
+      ]);
       return { ok: true };
     },
   );

@@ -1,26 +1,32 @@
 # CoopGuard backend
 
-Implemented **Node.js + TypeScript, Fastify and SQLite** service for real shared accounts and farm records. Version 0.4.1 runs locally over HTTPS and is prepared for deployment as a Render web service. The PC remains the development server; Pi hub synchronization remains future integration work. Sensors, history and equipment responses remain samples.
+Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.4.2 uses local SQLite on a development PC and Turso on Render Free. The PC remains the development server; Pi hub synchronization remains future integration work. Sensors, history and equipment responses remain samples.
 
 ## Deploy on Render
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Lawrenci01/CoopGuard_Backend)
 
-The repository-root [`render.yaml`](render.yaml) defines one Singapore-region Node web service with Render-managed public HTTPS and a 1 GB persistent disk mounted at `/var/data`. Render terminates public TLS, forwards HTTP to the process, supplies `PORT`, and is trusted as the application proxy. SQLite is stored at `/var/data/coopguard.sqlite`.
+The repository-root [`render.yaml`](render.yaml) defines one Singapore-region **free** Node web service with Render-managed public HTTPS. Render's free filesystem is temporary, so persistent accounts and farm records are stored in a separate Turso database on its free plan. Render terminates public TLS, forwards HTTP to the process, supplies `PORT`, and is trusted as the application proxy.
 
-1. Push this backend repository to GitHub, GitLab or Bitbucket.
-2. In Render, create a **Blueprint** from that repository. Review the paid `0.5c-512mb` service and 1 GB disk before applying it.
-3. Wait for `https://<service>.onrender.com/health` to return the CoopGuard service response.
-4. Open the service's Render Shell and provision the first farm:
+1. Create a free Turso account and one database. In its **Connect** page, copy the database URL and create a database token. Never commit or send the token in chat.
+2. In the Render service's **Environment** page, add `TURSO_DATABASE_URL` and secret `TURSO_AUTH_TOKEN`. Remove the old `CG_DB_PATH=/var/data/coopguard.sqlite` variable.
+3. Keep Render **Compute** on Free. Use `npm ci && npm run typecheck` as the build command and `npm start` as the start command.
+4. Redeploy and wait for `https://<service>.onrender.com/health` to return the CoopGuard service response.
+5. Render Free has no Shell. Provision the first farm from a private PowerShell window on a trusted developer PC, using the same Turso credentials:
 
-```bash
-npm run provision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --output /var/data/initial-accounts.txt
-cat /var/data/initial-accounts.txt
+```powershell
+cd C:\Vault\Projects\CG\backend
+$env:TURSO_DATABASE_URL="libsql://your-database-your-account.turso.io"
+$env:TURSO_AUTH_TOKEN="paste-your-private-database-token"
+npm ci
+npm run provision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --output .local/render-initial-accounts.txt
+Remove-Item Env:TURSO_DATABASE_URL
+Remove-Item Env:TURSO_AUTH_TOKEN
 ```
 
-Save the temporary credentials securely, sign in and change both passwords. Remove the temporary file after the credentials have been transferred. Local PC accounts and the Render database are separate unless a deliberate database migration is performed.
+Save the generated temporary credentials securely, sign in and change both passwords. Delete the private output file after the credentials have been transferred. Local PC accounts and the Turso database are separate unless a deliberate database migration is performed.
 
-A free Render web service is unsuitable for these real accounts because it cannot attach a persistent disk and loses a local SQLite database on restart, redeploy or idle spin-down. The paid disk also provides Render disk snapshots, but an application-level SQLite backup/export procedure is still required before commercial operation.
+Render Free sleeps after inactivity, so the first request can be slow while it wakes. Turso keeps the database durable across Render restarts and redeploys. Both free services have usage and availability limits and are suitable for development and an early pilot, not a commercial uptime commitment.
 
 ## Start on this PC
 
@@ -77,7 +83,7 @@ The CLI provisions the farm, its owner and its assigned technician. It generates
 
 `npm run tls` creates a private CA once and renews the server certificate with localhost and current IPv4 addresses. It retains the CA; deleting/replacing it breaks trust in installed builds. Server certificates last one year; renew before expiry or after an IP change and restart the server. Android checks both trust and hostnames. The tunnel validates this private origin CA and provides a publicly trusted certificate to phones.
 
-Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_HTTPS` (set `false` only behind Render's trusted HTTPS proxy), `CG_TRUST_PROXY`, `HOST` (default 0.0.0.0), and `PORT` (default 8443). The background helper is for the local default port. On this PC, use `.local/owner-reset-20261001.txt` for `cg.owner` and `.local/technician-reset-20261001.txt` for `cg.technician`; both require a first-sign-in password change. No password is embedded in app code.
+Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_HTTPS` (set `false` only behind Render's trusted HTTPS proxy), `CG_TRUST_PROXY`, `HOST` (default 0.0.0.0), and `PORT` (default 8443). `TURSO_DATABASE_URL` together with `TURSO_AUTH_TOKEN` selects persistent Turso storage instead of the local `CG_DB_PATH`. The background helper is for the local default port. On this PC, use `.local/owner-reset-20261001.txt` for `cg.owner` and `.local/technician-reset-20261001.txt` for `cg.technician`; both require a first-sign-in password change. No password is embedded in app code.
 
 ## Account management
 
@@ -98,13 +104,13 @@ Passwords use salted scrypt (`N=131072,r=8,p=1`, 64-byte output). At most two ex
 
 ## Records and offline operation
 
-The PC SQLite database is currently authoritative. Survey, generated plan, installation, commissioning, flock, notes and sample device changes are shared across assigned accounts/phones. Version checks reject stale edits. Stable operation IDs deduplicate note and offline-survey retries. Notes carry server-assigned author identity; workers/technicians can edit only their own, and owners can manage notes in their farm.
+The selected backend database is currently authoritative: local SQLite for PC development or Turso for Render. Survey, generated plan, installation, commissioning, flock, notes and sample device changes are shared across assigned accounts/phones. Version checks reject stale edits. Stable operation IDs deduplicate note and offline-survey retries. Notes carry server-assigned author identity; workers/technicians can edit only their own, and owners can manage notes in their farm.
 
 First sign-in, password changes and server mutations require connectivity to this server; local WiFi is enough and internet is unnecessary. A phone retains a validated cached session for up to 24 hours since its last account check and within session expiry. Disabling an account is immediate on the server; a disconnected phone can retain cached access for that bounded period. Only new notes enter the offline outbox. Equipment requests never replay from it.
 
 A technician may import an old anonymous phone record only before this farm's first change, then reviews it as part of the site survey. The source copy is preserved. Imported profile roles/commands do not grant privileges or execute equipment actions.
 
-SQLite uses WAL, foreign keys and serialized farm mutations. Application database writes stay in this Node service. Before copying the database for backup, stop the server cleanly or use SQLite's backup API; do not copy only the main file during active WAL writes. Keep backups private. No automatic backup or remote replication is configured yet.
+Local SQLite uses WAL, foreign keys and serialized farm mutations. Turso writes are sent through its authenticated HTTPS client and related records use atomic batches. Keep database tokens and backups private. A separate application-level export and restore workflow is still required before commercial operation.
 
 ## API and tests
 

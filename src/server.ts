@@ -2,9 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase } from "./database";
 import { createApp } from "./app";
-import { databasePath, localDir } from "./config";
+import { databasePath, localDir, turso } from "./config";
 
-const db = openDatabase(databasePath);
+if (process.env.RENDER === "true" && !turso)
+  throw new Error(
+    "Render Free requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN. Add both secrets in the service Environment page.",
+  );
+const db = await openDatabase(databasePath, turso);
 const useHttps = process.env.CG_HTTPS !== "false";
 const app = await createApp(db, {
   trustProxy: process.env.CG_TRUST_PROXY === "true",

@@ -3,7 +3,7 @@ services:
     name: coopguard-api
     runtime: node
     region: singapore
-    plan: 0.5c-512mb
+    plan: free
     buildCommand: npm ci && npm run typecheck
     startCommand: npm start
     healthCheckPath: /health
@@ -15,9 +15,7 @@ services:
         value: "false"
       - key: CG_TRUST_PROXY
         value: "true"
-      - key: CG_DB_PATH
-        value: /var/data/coopguard.sqlite
-    disk:
-      name: coopguard-data
-      mountPath: /var/data
-      sizeGB: 1
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

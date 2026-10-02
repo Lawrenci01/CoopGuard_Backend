@@ -5,7 +5,7 @@ import { dirname, resolve, join } from "node:path";
 import { createFarm, openDatabase } from "./database";
 import { hashPassword, temporaryPassword } from "./passwords";
 import { username as usernameSchema } from "./schemas";
-import { databasePath, localDir } from "./config";
+import { databasePath, localDir, turso } from "./config";
 
 // Deliberately a server-side operator command: never exposed as a public signup route.
 const { values } = parseArgs({
@@ -25,21 +25,26 @@ if (existsSync(output))
     "Choose a new output file; existing credentials will not be overwritten.",
   );
 mkdirSync(dirname(output), { recursive: true });
-const db = openDatabase(databasePath);
+const db = await openDatabase(databasePath, turso);
 const credentials: string[] = [];
 if (values["reset-user"]) {
   const username = usernameSchema.parse(values["reset-user"]);
-  const user = db
+  const user = await db
     .prepare("SELECT id FROM users WHERE username=?")
     .get(username);
   if (!user) throw new Error("Account not found.");
   const password = temporaryPassword(),
     hash = await hashPassword(password);
-  db.prepare("UPDATE users SET password_hash=?,must_change=1 WHERE id=?").run(
-    hash,
-    user.id!,
-  );
-  db.prepare("DELETE FROM sessions WHERE user_id=?").run(user.id!);
+  await db.batch([
+    {
+      sql: "UPDATE users SET password_hash=?,must_change=1 WHERE id=?",
+      args: [hash, user.id as string],
+    },
+    {
+      sql: "DELETE FROM sessions WHERE user_id=?",
+      args: [user.id as string],
+    },
+  ]);
   credentials.push(`Username: ${username}\nTemporary password: ${password}`);
 } else {
   if (
@@ -54,7 +59,7 @@ if (values["reset-user"]) {
   if (owner === technician)
     throw new Error("Owner and technician must have separate accounts.");
   for (const username of [owner, technician])
-    if (db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
+    if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
       throw new Error("Username already exists. Choose a unique account name.");
   const entries = [];
   for (const [username, role] of [
@@ -70,33 +75,31 @@ if (values["reset-user"]) {
       hash: await hashPassword(password),
     });
   }
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const farmId = createFarm(db, values.farm.trim());
-    credentials.push(`Farm: ${values.farm.trim()}\nFarm ID: ${farmId}`);
-    for (const entry of entries) {
-      db.prepare(
-        "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)",
-      ).run(
-        entry.id,
-        entry.username,
-        entry.role === "owner" ? "Farm owner" : "CoopGuard technician",
-        entry.role,
-        entry.hash,
-        Date.now(),
-      );
-      db.prepare("INSERT INTO memberships(user_id,farm_id) VALUES(?,?)").run(
-        entry.id,
-        farmId,
-      );
-      credentials.push(
-        `Role: ${entry.role}\nUsername: ${entry.username}\nTemporary password: ${entry.password}`,
-      );
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+  const farmId = await createFarm(db, values.farm.trim());
+  credentials.push(`Farm: ${values.farm.trim()}\nFarm ID: ${farmId}`);
+  await db.batch(
+    entries.flatMap((entry) => [
+      {
+        sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)",
+        args: [
+          entry.id,
+          entry.username,
+          entry.role === "owner" ? "Farm owner" : "CoopGuard technician",
+          entry.role,
+          entry.hash,
+          Date.now(),
+        ],
+      },
+      {
+        sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+        args: [entry.id, farmId],
+      },
+    ]),
+  );
+  for (const entry of entries) {
+    credentials.push(
+      `Role: ${entry.role}\nUsername: ${entry.username}\nTemporary password: ${entry.password}`,
+    );
   }
 }
 writeFileSync(

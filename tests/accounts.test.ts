@@ -30,24 +30,25 @@ test("public tunnel requests are remote while private farm hosts are local", () 
 test("shared accounts, farm permissions, offline replay and durable records", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "coopguard-accounts-"));
   const path = join(dir, "test.sqlite");
-  let db = openDatabase(path),
+  let db = await openDatabase(path),
     clock = Date.now();
   const hash = await hashPassword("Test password 123!");
-  const farm = createFarm(db, "First farm", clock),
-    otherFarm = createFarm(db, "Other farm", clock);
+  const farm = await createFarm(db, "First farm", clock),
+    otherFarm = await createFarm(db, "Other farm", clock);
   for (const [id, role, site] of [
     ["owner", "owner", farm],
     ["tech", "technician", farm],
     ["worker", "worker", farm],
     ["other", "owner", otherFarm],
   ] as const) {
-    db.prepare(
-      "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
-    ).run(id, id, `${role} name`, role, hash, clock);
-    db.prepare("INSERT INTO memberships(user_id,farm_id) VALUES(?,?)").run(
-      id,
-      site,
-    );
+    await db
+      .prepare(
+        "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
+      )
+      .run(id, id, `${role} name`, role, hash, clock);
+    await db
+      .prepare("INSERT INTO memberships(user_id,farm_id) VALUES(?,?)")
+      .run(id, site);
   }
   let app = await createApp(db, { clock: () => clock });
   const send = async (
@@ -204,7 +205,7 @@ test("shared accounts, farm permissions, offline replay and durable records", as
           ).statusCode,
           403,
         );
-        const digests = db.prepare("SELECT digest FROM sessions").all();
+        const digests = await db.prepare("SELECT digest FROM sessions").all();
         assert.ok(digests.every((r) => r.digest !== owner.token));
         assert.ok(
           digests.some(
@@ -453,7 +454,7 @@ test("shared accounts, farm permissions, offline replay and durable records", as
         assert.equal(r.statusCode, 200, r.body);
         await app.close();
         db.close();
-        db = openDatabase(path);
+        db = await openDatabase(path);
         app = await createApp(db, { clock: () => clock });
         const saved = await send("GET", route, owner.token);
         assert.equal(saved.statusCode, 200);
