@@ -107,5 +107,5 @@ writeFileSync(
   `CoopGuard initial credentials — keep private\n\n${credentials.join("\n\n")}\n\nChange each temporary password at first sign-in. These passwords are not embedded in the app.\n`,
   { encoding: "utf8", mode: 0o600, flag: "wx" },
 );
-db.close();
+await db.close();
 console.log(`Accounts provisioned. Private credentials file: ${output}`);

@@ -1,7 +1,8 @@
 import { createClient } from "@libsql/client/web";
 import type { Client, InArgs, InStatement, ResultSet } from "@libsql/client";
+import type { Database as SyncClient } from "@tursodatabase/sync";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { seedLocalFarm } from "./shared/services/localFarmRepository";
@@ -19,7 +20,13 @@ export interface PreparedStatement {
 export interface CoopDatabase {
   prepare(sql: string): PreparedStatement;
   batch(statements: BatchStatement[]): Promise<void>;
-  close(): void;
+  sync?(): Promise<void>;
+  syncState?(): Promise<{
+    pendingOperations: number;
+    lastPullAt: number;
+    lastPushAt: number | null;
+  }>;
+  close(): void | Promise<void>;
 }
 
 class LocalDatabase implements CoopDatabase {
@@ -96,6 +103,57 @@ class TursoDatabase implements CoopDatabase {
   }
 }
 
+class HubSyncDatabase implements CoopDatabase {
+  private syncing: Promise<void> | null = null;
+
+  constructor(private readonly client: SyncClient) {}
+
+  prepare(sql: string): PreparedStatement {
+    return {
+      get: async (...args) => (await this.client.get(sql, ...args)) as SqlRow | undefined,
+      all: async (...args) => (await this.client.all(sql, ...args)) as SqlRow[],
+      run: async (...args) => {
+        const result = await this.client.run(sql, ...args);
+        return { changes: result.changes };
+      },
+    };
+  }
+
+  async batch(statements: BatchStatement[]) {
+    await this.client.batch(
+      statements.map(({ sql, args = [] }) => ({ sql, args })),
+      "immediate",
+    );
+  }
+
+  async sync() {
+    if (this.syncing) return this.syncing;
+    this.syncing = (async () => {
+      await this.client.push();
+      await this.client.pull();
+    })();
+    try {
+      await this.syncing;
+    } finally {
+      this.syncing = null;
+    }
+  }
+
+  async syncState() {
+    const state = await this.client.stats();
+    return {
+      pendingOperations: state.cdcOperations,
+      lastPullAt: state.lastPullUnixTime * 1000,
+      lastPushAt:
+        state.lastPushUnixTime === null ? null : state.lastPushUnixTime * 1000,
+    };
+  }
+
+  async close() {
+    await this.client.close();
+  }
+}
+
 const schema = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -127,16 +185,55 @@ const schema = [
 export async function openDatabase(
   path: string,
   turso?: { url: string; authToken: string },
+  mode: "cloud" | "hub" | "standalone" = turso ? "cloud" : "standalone",
 ): Promise<CoopDatabase> {
-  const database: CoopDatabase = turso
-    ? new TursoDatabase(
-        createClient({
-          url: turso.url,
-          authToken: turso.authToken,
-          intMode: "number",
-        }),
-      )
-    : new LocalDatabase(path);
+  let database: CoopDatabase;
+  if (mode === "hub") {
+    if (!turso)
+      throw new Error(
+        "Hub mode requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN for cloud synchronization.",
+      );
+    const commissioned = existsSync(path);
+    mkdirSync(dirname(path), { recursive: true });
+    const { connect } = await import("@tursodatabase/sync");
+    let client: SyncClient;
+    try {
+      client = await connect({
+        path,
+        url: turso.url,
+        authToken: turso.authToken,
+        clientName: process.env.CG_HUB_ID ?? "coopguard-hub",
+      });
+    } catch (error) {
+      if (!commissioned)
+        throw new Error(
+          `A new hub needs internet for its first cloud bootstrap: ${error instanceof Error ? error.message : "connection failed"}`,
+        );
+      throw error;
+    }
+    database = new HubSyncDatabase(client);
+    try {
+      await client.pull();
+    } catch (error) {
+      if (!commissioned) {
+        await client.close();
+        throw new Error(
+          `A new hub needs internet for its first cloud bootstrap: ${error instanceof Error ? error.message : "sync failed"}`,
+        );
+      }
+      console.warn(
+        "Cloud unavailable during hub startup; using the commissioned local database.",
+      );
+    }
+  } else if (turso) {
+    database = new TursoDatabase(
+      createClient({
+        url: turso.url,
+        authToken: turso.authToken,
+        intMode: "number",
+      }),
+    );
+  } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
   return database;
 }

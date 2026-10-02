@@ -11,3 +11,9 @@ export const turso =
         authToken: process.env.TURSO_AUTH_TOKEN,
       }
     : undefined;
+export const deploymentMode =
+  process.env.CG_MODE === "hub"
+    ? "hub"
+    : process.env.RENDER === "true" || process.env.CG_MODE === "cloud"
+      ? "cloud"
+      : "standalone";

@@ -73,6 +73,8 @@ export async function createApp(
     clock?: () => number;
     https?: ServerOptions;
     trustProxy?: boolean;
+    deploymentMode?: "cloud" | "hub" | "standalone";
+    hubId?: string;
   } = {},
 ) {
   const now = options.clock ?? Date.now;
@@ -246,8 +248,13 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.4.2",
+    version: "0.5.0",
     readings: "sample",
+    mode: options.deploymentMode ?? "standalone",
+    ...(options.deploymentMode === "hub" && options.hubId
+      ? { hubId: options.hubId }
+      : {}),
+    ...(db.syncState ? { sync: await db.syncState() } : {}),
   }));
   app.post(
     "/v1/auth/login",

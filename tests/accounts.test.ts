@@ -10,6 +10,7 @@ import { hashPassword } from "../src/passwords";
 import { seedLocalFarm } from "../src/shared/services/localFarmRepository";
 import type { Session } from "../src/apiTypes";
 import { completeSiteSurvey } from "./siteTestFixture";
+import { reprovisionFarmAccounts } from "../src/accountAdmin";
 
 test("public tunnel requests are remote while private farm hosts are local", () => {
   assert.equal(connectionForHeaders({ host: "192.168.8.36:8443" }), "local");
@@ -24,6 +25,48 @@ test("public tunnel requests are remote while private farm hosts are local", () 
       "cf-connecting-ip": "203.0.113.8",
     }),
     "cloud",
+  );
+});
+
+test("farm reprovision revokes old accounts while preserving the farm", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-reprovision-"));
+  const db = await openDatabase(join(dir, "test.sqlite"));
+  t.after(async () => {
+    await db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const farmId = await createFarm(db, "Pilot farm");
+  const hash = await hashPassword("Test password 123!");
+  await db.batch([
+    {
+      sql: "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
+      args: ["old-owner", "old.owner", "Old owner", "owner", hash, Date.now()],
+    },
+    {
+      sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+      args: ["old-owner", farmId],
+    },
+    {
+      sql: "INSERT INTO sessions(digest,user_id,expires_at) VALUES(?,?,?)",
+      args: ["old-session", "old-owner", Date.now() + 60_000],
+    },
+  ]);
+
+  const result = await reprovisionFarmAccounts(
+    db,
+    "Pilot farm",
+    "old.owner",
+    "new.technician",
+  );
+  assert.equal(result.farmId, farmId);
+  assert.equal(result.credentials.length, 2);
+  assert.equal(await db.prepare("SELECT 1 FROM users WHERE id=?").get("old-owner"), undefined);
+  assert.ok(await db.prepare("SELECT 1 FROM users WHERE username=?").get("old.owner"));
+  assert.equal(await db.prepare("SELECT 1 FROM sessions WHERE digest=?").get("old-session"), undefined);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM farms WHERE id=?").get(farmId))!.n, 1);
+  assert.equal(
+    (await db.prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?").get(farmId))!.n,
+    2,
   );
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "coopguard-backend",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,6 +9,7 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "provision": "tsx src/provision.ts",
+    "reprovision": "tsx src/reprovision.ts",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "tls": "node scripts/create-local-tls.mjs"
@@ -16,6 +17,7 @@
   "dependencies": {
     "@fastify/rate-limit": "10.3.0",
     "@libsql/client": "^0.18.0",
+    "@tursodatabase/sync": "^0.8.1",
     "fastify": "5.12.5",
     "zod": "4.6.5"
   },

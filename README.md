@@ -1,6 +1,6 @@
 # CoopGuard backend
 
-Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.4.2 uses local SQLite on a development PC and Turso on Render Free. The PC remains the development server; Pi hub synchronization remains future integration work. Sensors, history and equipment responses remain samples.
+Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.5.0 uses Turso on Render Free and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Sensors, history and equipment responses remain samples.
 
 ## Deploy on Render
 
@@ -24,7 +24,15 @@ Remove-Item Env:TURSO_DATABASE_URL
 Remove-Item Env:TURSO_AUTH_TOKEN
 ```
 
-Save the generated temporary credentials securely, sign in and change both passwords. Delete the private output file after the credentials have been transferred. Local PC accounts and the Turso database are separate unless a deliberate database migration is performed.
+Save the generated temporary credentials securely, sign in and change both passwords. Delete the private output file after the credentials have been transferred.
+
+To replace every account assigned to an existing pilot farm while preserving its survey and farm records, run:
+
+```powershell
+npm run reprovision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --confirm "Pilot farm" --output .local/render-replacement-accounts.txt
+```
+
+The command requires Turso credentials in the same PowerShell window, revokes old sessions, removes the farm's old memberships, and writes fresh temporary passwords only to the named private file. The exact farm name after `--confirm` is the destructive-action safeguard.
 
 Render Free sleeps after inactivity, so the first request can be slow while it wakes. Turso keeps the database durable across Render restarts and redeploys. Both free services have usage and availability limits and are suitable for development and an early pilot, not a commercial uptime commitment.
 
@@ -47,6 +55,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Vault\Projects\CG\backend
 
 The rule allows TCP 8443 only from the local subnet on Private networks. It does not open router/internet forwarding. Phones must be on the same network without client isolation. USB testing can use `adb reverse tcp:8443 tcp:8443` and the app address `https://localhost:8443`.
 
+## Pi hub local and online mode
+
+The same backend runs on the Pi with a local synchronized database. Commission it once while the Pi has internet:
+
+```powershell
+$env:CG_MODE="hub"
+$env:CG_HUB_ID="pilot-house-1"
+$env:CG_DB_PATH=".local/hub.sqlite"
+$env:TURSO_DATABASE_URL="libsql://your-database-your-account.turso.io"
+$env:TURSO_AUTH_TOKEN="paste-your-private-database-token"
+npm start
+```
+
+The first start downloads the cloud database and therefore requires internet. Later starts use the commissioned local database when the internet is unavailable. The hub attempts push then pull every 30 seconds by default. LoRa remains the node-to-hub network; the Android app reaches the hub over farm WiFi. Use a hub certificate signed by the CoopGuard CA included in the APK.
+
+The technician pairs the hub's HTTPS address once in the app. After that, the app probes both endpoints using the same opaque session token, prefers the hub while it is reachable, uses Render on any internet connection when the hub is absent, and displays cached phone data if neither can be reached.
+
 ## Temporary online access without Render
 
 The pilot can expose this PC through an outbound Cloudflare Quick Tunnel without router port forwarding:
@@ -57,7 +82,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-cloudflared.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-online.ps1
 ```
 
-The second command starts the backend if needed, verifies the public `/health` endpoint and saves the HTTPS address in `.local/public-url.txt`. Enter that address under **Connection settings** or embed it in an internal APK. The phone can then use any internet-connected WiFi or mobile-data network. Public-host requests are classified as remote/cloud; private `localhost`, `.local`, `10.x`, `172.16-31.x` and `192.168.x` hosts remain on-farm connections. The server enforces that distinction as well as the UI.
+The second command starts the backend if needed, verifies the public `/health` endpoint and saves the HTTPS address in `.local/public-url.txt`. This fallback now requires an internal build whose `EXPO_PUBLIC_API_URL` points to that tunnel. Normal pilot builds use the fixed Render URL. The phone can then use any internet-connected WiFi or mobile-data network. Public-host requests are classified as remote/cloud; private `localhost`, `.local`, `10.x`, `172.16-31.x` and `192.168.x` hosts remain on-farm connections. The server enforces that distinction as well as the UI.
 
 Keep the PC awake and both background processes running. Stop only the public route with:
 
@@ -83,7 +108,7 @@ The CLI provisions the farm, its owner and its assigned technician. It generates
 
 `npm run tls` creates a private CA once and renews the server certificate with localhost and current IPv4 addresses. It retains the CA; deleting/replacing it breaks trust in installed builds. Server certificates last one year; renew before expiry or after an IP change and restart the server. Android checks both trust and hostnames. The tunnel validates this private origin CA and provides a publicly trusted certificate to phones.
 
-Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_HTTPS` (set `false` only behind Render's trusted HTTPS proxy), `CG_TRUST_PROXY`, `HOST` (default 0.0.0.0), and `PORT` (default 8443). `TURSO_DATABASE_URL` together with `TURSO_AUTH_TOKEN` selects persistent Turso storage instead of the local `CG_DB_PATH`. The background helper is for the local default port. On this PC, use `.local/owner-reset-20261001.txt` for `cg.owner` and `.local/technician-reset-20261001.txt` for `cg.technician`; both require a first-sign-in password change. No password is embedded in app code.
+Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_HTTPS` (set `false` only behind Render's trusted HTTPS proxy), `CG_TRUST_PROXY`, `CG_MODE`, `CG_HUB_ID`, `CG_SYNC_INTERVAL_MS`, `HOST` (default 0.0.0.0), and `PORT` (default 8443). `TURSO_DATABASE_URL` together with `TURSO_AUTH_TOKEN` selects Turso. `CG_MODE=hub` changes that connection into a local-first synchronized replica at `CG_DB_PATH`. The background helper is for the local default port. No password is embedded in app code.
 
 ## Account management
 
@@ -104,7 +129,7 @@ Passwords use salted scrypt (`N=131072,r=8,p=1`, 64-byte output). At most two ex
 
 ## Records and offline operation
 
-The selected backend database is currently authoritative: local SQLite for PC development or Turso for Render. Survey, generated plan, installation, commissioning, flock, notes and sample device changes are shared across assigned accounts/phones. Version checks reject stale edits. Stable operation IDs deduplicate note and offline-survey retries. Notes carry server-assigned author identity; workers/technicians can edit only their own, and owners can manage notes in their farm.
+The selected backend database is authoritative: local SQLite for PC development, Turso for Render, or a Turso Sync local replica on the hub. Survey, generated plan, installation, commissioning, flock, notes and sample device changes are shared across assigned accounts/phones. Version checks reject stale edits. Stable operation IDs deduplicate note and offline-survey retries. Notes carry server-assigned author identity; workers/technicians can edit only their own, and owners can manage notes in their farm.
 
 First sign-in, password changes and server mutations require connectivity to this server; local WiFi is enough and internet is unnecessary. A phone retains a validated cached session for up to 24 hours since its last account check and within session expiry. Disabling an account is immediate on the server; a disconnected phone can retain cached access for that bounded period. Only new notes enter the offline outbox. Equipment requests never replay from it.
 
@@ -135,4 +160,4 @@ Tests use Fastify injection and an isolated temporary SQLite database, including
 
 The backend-owned state rules and API types live under `src/shared`; the repository has no build-time or runtime dependency on the mobile frontend. Changes to these contracts must also be reflected in the mobile repository until a separately versioned shared package is introduced.
 
-Real ingestion, local control-rule processing, node acknowledgment, commissioned device pairing, push delivery, Render-to-hub replication and Python model jobs remain unimplemented. The eventual Node hub service owns ordinary CRUD/rules and the local database; Python runs bounded AI jobs without blocking API requests. Historical FastAPI backend instructions are superseded by the JavaScript backend decision.
+Real ingestion, local control-rule processing, node acknowledgment, push delivery and Python model jobs remain unimplemented. The Node hub service now has the shared-account and database-sync foundation; physical Pi commissioning and conflict testing under simultaneous offline/cloud edits are still required. Python runs bounded AI jobs without blocking API requests. Historical FastAPI backend instructions are superseded by the JavaScript backend decision.
