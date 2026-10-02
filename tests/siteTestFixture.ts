@@ -36,6 +36,8 @@ export function completeSiteSurvey() {
     region: "Philippines",
   });
   survey.sensors.plannedNodes = 3;
+  survey.sensors.placementNotes =
+    "Three bird-height nodes distributed across the inlet, center and fan-end sections.";
   survey.operations.dayResponder = "Farm owner";
   survey.operations.powerFailureProcedure =
     "Start the generator and inspect ventilation.";

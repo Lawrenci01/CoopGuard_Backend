@@ -170,6 +170,12 @@ export interface InstallationPlan {
   controlRestrictions: string[];
 }
 
+export interface HouseCapabilities {
+  app: string[];
+  hardware: string[];
+  control: string;
+}
+
 export const installationChecks = [
   ["hubMounted", "Hub mounted at the approved location", false],
   ["antennaInstalled", "LoRa antenna installed and protected", false],
@@ -424,12 +430,7 @@ export function surveyMissing(s: SiteSurvey): string[] {
   const missing: string[] = [];
   if (!clean(s.farm.farmName)) missing.push("Farm name");
   if (!clean(s.farm.houseName)) missing.push("House name");
-  if (!clean(s.farm.address)) missing.push("Farm address");
   if (!clean(s.farm.ownerName)) missing.push("Owner or farm contact");
-  if (!clean(s.farm.visitDate)) missing.push("Visit date");
-  if (!clean(s.farm.technicianName)) missing.push("Technician name");
-  if (!clean(s.goals.recurringProblems))
-    missing.push("Farm problems and objectives");
   if (s.house.lengthMetres <= 0 || s.house.widthMetres <= 0)
     missing.push("House dimensions");
   if (!clean(s.power.hubPowerLocation))
@@ -447,7 +448,10 @@ export function surveyMissing(s: SiteSurvey): string[] {
     !s.sensors.litterMoisture
   )
     missing.push("At least one environmental measurement");
-  if (!clean(s.operations.dayResponder)) missing.push("Daytime responder");
+  if (!clean(s.sensors.placementNotes))
+    missing.push("Node locations, heights and power sources");
+  if (!clean(s.operations.dayResponder))
+    missing.push("Primary alert responder");
   if (!clean(s.operations.powerFailureProcedure))
     missing.push("Power-loss response");
   if (!s.decision.ownerAcknowledged) missing.push("Owner acknowledgement");
@@ -551,6 +555,54 @@ export function buildInstallationPlan(
   };
 }
 
+export function houseCapabilities(
+  survey: SiteSurvey,
+  plan = buildInstallationPlan(survey),
+): HouseCapabilities {
+  const equipment = plan.equipment.map(
+    (item) =>
+      `${equipmentKinds.find((kind) => kind.key === item.kind)?.label ?? item.kind} (${item.count})`,
+  );
+  const readingMetrics = plan.metrics.filter(
+    (metric) => metric !== "Sound collection",
+  );
+  const app = [
+    readingMetrics.length
+      ? `${readingMetrics.join(", ")} readings, alerts and trends`
+      : "No environmental reading views selected",
+    plan.connectivity === "cloud_sync"
+      ? "Local use plus cloud synchronization and remote account access"
+      : "Local hub use; cloud synchronization waits for internet",
+  ];
+  if (plan.metrics.includes("Sound collection"))
+    app.push("Sound anomaly insights and flock-sound observations");
+  if (equipment.length) app.push(`Equipment status for ${equipment.join(", ")}`);
+
+  const hardware = [
+    `${plan.nodeCount || 0} sensing node${plan.nodeCount === 1 ? "" : "s"} across ${plan.sections} house section${plan.sections === 1 ? "" : "s"}`,
+    plan.metrics.length
+      ? `Collect ${plan.metrics.join(", ")}`
+      : "Sensor selection is still required",
+  ];
+  if (equipment.length)
+    hardware.push(`Interface plan for ${equipment.join(", ")}`);
+
+  const requestedKinds = plan.equipment
+    .filter((item) => item.controlRequested)
+    .map(
+      (item) =>
+        equipmentKinds.find((kind) => kind.key === item.kind)?.label ??
+        item.kind,
+    );
+  const control =
+    plan.recommendedMode === "full_candidate"
+      ? `Automatic control candidate for ${requestedKinds.join(", ")}. Control remains locked until commissioning and the monitoring trial pass.`
+      : requestedKinds.length
+        ? `Automatic control is unavailable under the current survey: ${plan.controlRestrictions[0] ?? "technical review is required"}`
+        : "Automatic control is unavailable because no equipment group requests CoopGuard control.";
+  return { app, hardware, control };
+}
+
 export function workflowFromSurvey(
   survey: SiteSurvey,
   now = Date.now(),
@@ -617,13 +669,13 @@ export function validSiteSurvey(value: unknown): value is SiteSurvey {
       s.schemaVersion === 1 &&
       hasText(s.farm.farmName, 80) &&
       hasText(s.farm.houseName, 80) &&
-      hasText(s.farm.address, 300) &&
+      optionalText(s.farm.address, 300) &&
       hasText(s.farm.ownerName, 80) &&
       optionalText(s.farm.ownerContact, 80) &&
       /^\d{4}-\d{2}-\d{2}$/.test(s.farm.visitDate) &&
-      hasText(s.farm.technicianName, 80) &&
+      optionalText(s.farm.technicianName, 80) &&
       answer(s.farm.photoPermission) &&
-      hasText(s.goals.recurringProblems) &&
+      optionalText(s.goals.recurringProblems) &&
       optionalText(s.goals.currentDetection) &&
       optionalText(s.goals.currentResponse) &&
       answer(s.goals.recordsAvailable) &&
@@ -681,7 +733,7 @@ export function validSiteSurvey(value: unknown): value is SiteSurvey {
       answer(s.power.backup) &&
       optionalText(s.power.backupDetails) &&
       optionalText(s.power.poweredCircuits) &&
-      hasText(s.power.powerLossProcedure) &&
+      optionalText(s.power.powerLossProcedure) &&
       hasText(s.power.hubPowerLocation, 300) &&
       answer(s.connectivity.internet) &&
       answer(s.connectivity.farmWifi) &&
@@ -704,7 +756,7 @@ export function validSiteSurvey(value: unknown): value is SiteSurvey {
       ].every(
         (key) => typeof s.sensors[key as keyof typeof s.sensors] === "boolean",
       ) &&
-      optionalText(s.sensors.placementNotes) &&
+      hasText(s.sensors.placementNotes) &&
       answer(s.ai.audioConsent) &&
       optionalText(s.ai.microphoneLocations) &&
       optionalText(s.ai.noiseSources) &&
