@@ -11,6 +11,7 @@ export interface Account {
 export interface FarmAccess {
   id: string;
   name: string;
+  code: string;
 }
 export interface Identity {
   account: Account;

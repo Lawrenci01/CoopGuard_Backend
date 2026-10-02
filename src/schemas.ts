@@ -103,6 +103,27 @@ export const actionSchema = z.discriminatedUnion("type", [
       mode: z.enum(["monitor", "full"]),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("createVirtualHub"),
+      farmCode: z.string().regex(/^CG-[A-Z0-9-]{4,32}$/),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("createVirtualNode"),
+      farmCode: z.string().regex(/^CG-[A-Z0-9-]{4,32}$/),
+      profile: z.enum(["climate", "air_quality", "sound", "control"]),
+      section,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("pairVirtualDevice"),
+      qr: z.string().min(20).max(1000),
+    })
+    .strict(),
+  z.object({ type: z.literal("removeVirtualDevice"), id }).strict(),
 ]);
 export const mutationSchema = z
   .object({

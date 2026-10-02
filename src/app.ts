@@ -119,9 +119,9 @@ export async function createApp(
       },
       farms: (await db
         .prepare(
-          "SELECT f.id,f.name FROM farms f JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
+          "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
         )
-        .all(user.id)) as { id: string; name: string }[],
+        .all(user.id)) as { id: string; name: string; code: string }[],
     };
   }
   async function issue(user: User): Promise<Session> {
@@ -248,7 +248,7 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.5.1",
+    version: "0.6.0",
     readings: "sample",
     mode: options.deploymentMode ?? "standalone",
     ...(options.deploymentMode === "hub" && options.hubId
@@ -354,6 +354,13 @@ export async function createApp(
       const { user, farmId } = await access(request),
         body = parse(mutationSchema, request.body);
       const action = body.action as LocalAction;
+      if (action.type === "createVirtualHub" || action.type === "createVirtualNode") {
+        const target = (await db
+          .prepare("SELECT code FROM farm_codes WHERE farm_id=?")
+          .get(farmId)) as { code: string } | undefined;
+        if (!target || action.farmCode !== target.code)
+          fail(400, "The device Farm ID does not match the selected farm.");
+      }
       if (
         [
           "addSensor",
@@ -367,6 +374,10 @@ export async function createApp(
           "startMonitoringTrial",
           "siteChecklist",
           "activateSite",
+          "createVirtualHub",
+          "createVirtualNode",
+          "pairVirtualDevice",
+          "removeVirtualDevice",
         ].includes(action.type) &&
         user.role !== "technician"
       )

@@ -6,6 +6,10 @@ import {
   trialChecks,
 } from "../src/shared/domain/siteWorkflow";
 import type { LocalFarmRepository } from "../src/shared/services/localFarmRepository";
+import {
+  pairingQr,
+  type VirtualNodeProfile,
+} from "../src/shared/domain/deviceSimulation";
 
 export function completeSiteSurvey() {
   const survey = emptySiteSurvey();
@@ -83,6 +87,7 @@ export async function commissionSiteForControl(repo: LocalFarmRepository) {
   await repo.dispatch({ type: "saveSiteSurvey", value: completeSiteSurvey() });
   await repo.dispatch({ type: "approveSitePlan" });
   await repo.dispatch({ type: "startInstallation" });
+  await pairPlannedVirtualDevices(repo);
   for (const [key] of installationChecks)
     await repo.dispatch({
       type: "siteChecklist",
@@ -111,4 +116,44 @@ export async function commissionSiteForControl(repo: LocalFarmRepository) {
     type: "context",
     patch: { role: "owner", connection: "local" },
   });
+}
+
+export async function pairPlannedVirtualDevices(repo: LocalFarmRepository) {
+  const farmCode = "CG-PH-TEST01";
+  let state = await repo.dispatch({ type: "createVirtualHub", farmCode });
+  const hub = state.deviceSimulation.hub!;
+  await repo.dispatch({
+    type: "pairVirtualDevice",
+    qr: pairingQr({
+      version: 1,
+      kind: "hub",
+      farmCode,
+      deviceId: hub.id,
+      pairingCode: hub.pairingCode,
+    }),
+  });
+  for (const [profile, section] of [
+    ["climate", "A"],
+    ["control", "B"],
+    ["climate", "C"],
+  ] as [VirtualNodeProfile, "A" | "B" | "C"][]) {
+    state = await repo.dispatch({
+      type: "createVirtualNode",
+      farmCode,
+      profile,
+      section,
+    });
+    const node = state.deviceSimulation.nodes.at(-1)!;
+    await repo.dispatch({
+      type: "pairVirtualDevice",
+      qr: pairingQr({
+        version: 1,
+        kind: "node",
+        farmCode,
+        deviceId: node.id,
+        pairingCode: node.pairingCode,
+        profile: node.profile,
+      }),
+    });
+  }
 }

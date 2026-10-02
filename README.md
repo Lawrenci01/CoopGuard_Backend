@@ -1,6 +1,6 @@
 # CoopGuard backend
 
-Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.5.1 uses Turso on Render Free and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Sensors, history and equipment responses remain samples.
+Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.6.0 uses Turso on Render Free, assigns each farm a unique Farm ID, stores the simulated QR device workflow, and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Sensors, history, equipment responses and virtual device heartbeats remain samples.
 
 ## Deploy on Render
 
@@ -113,6 +113,7 @@ Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_H
 ## Account management
 
 - No public signup. Team-only owner/technician provisioning is a local operator CLI, not a mobile API.
+- A technician keeps one account and receives explicit membership for each assigned farm. Farm IDs select among those memberships; possession of an ID or QR never grants access.
 - Owners create **workers only** within their own farm, and can rename, disable/enable or reset them. They cannot create/edit owners or technicians. A technician must have explicit farm membership.
 - Workers cannot manage accounts, farm setup, flock cycles or sensors. Only technicians complete or change the site survey, approve the generated plan, record installation/commissioning checks, activate a verified operating mode and manage devices; owners manage flock cycles.
 - All server requests validate active session, current role and farm membership. Strict schemas reject role injection and unsupported actions.
@@ -129,7 +130,7 @@ Passwords use salted scrypt (`N=131072,r=8,p=1`, 64-byte output). At most two ex
 
 ## Records and offline operation
 
-The selected backend database is authoritative: local SQLite for PC development, Turso for Render, or a Turso Sync local replica on the hub. Survey, generated plan, installation, commissioning, flock, notes and sample device changes are shared across assigned accounts/phones. Version checks reject stale edits. Stable operation IDs deduplicate note and offline-survey retries. Notes carry server-assigned author identity; workers/technicians can edit only their own, and owners can manage notes in their farm.
+The selected backend database is authoritative: local SQLite for PC development, Turso for Render, or a Turso Sync local replica on the hub. Survey, generated plan, virtual hub/node records, installation, commissioning, flock, notes and sample device changes are shared across assigned accounts/phones. The API verifies that a newly created virtual device uses the selected farm's server-issued Farm ID. Version checks reject stale edits. Stable operation IDs deduplicate note and offline-survey retries. Notes carry server-assigned author identity; workers/technicians can edit only their own, and owners can manage notes in their farm.
 
 First sign-in, password changes and server mutations require connectivity to this server; local WiFi is enough and internet is unnecessary. A phone retains a validated cached session for up to 24 hours since its last account check and within session expiry. Disabling an account is immediate on the server; a disconnected phone can retain cached access for that bounded period. Only new notes enter the offline outbox. Equipment requests never replay from it.
 

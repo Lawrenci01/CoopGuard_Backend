@@ -163,6 +163,9 @@ const schema = [
   )`,
   `CREATE TABLE IF NOT EXISTS farms (id TEXT PRIMARY KEY, name TEXT NOT NULL,
     state TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS farm_codes (
+    farm_id TEXT PRIMARY KEY REFERENCES farms(id), code TEXT NOT NULL UNIQUE
+  )`,
   `CREATE TABLE IF NOT EXISTS memberships (
     user_id TEXT NOT NULL REFERENCES users(id), farm_id TEXT NOT NULL REFERENCES farms(id),
     PRIMARY KEY(user_id,farm_id)
@@ -235,7 +238,19 @@ export async function openDatabase(
     );
   } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
+  const farms = await database.prepare("SELECT id FROM farms").all();
+  if (farms.length)
+    await database.batch(
+      farms.map((farm) => ({
+        sql: "INSERT OR IGNORE INTO farm_codes(farm_id,code) VALUES(?,?)",
+        args: [farm.id as string, farmCode(farm.id as string)],
+      })),
+    );
   return database;
+}
+
+export function farmCode(id: string) {
+  return `CG-PH-${id.replace(/[^a-f0-9]/gi, "").slice(0, 8).toUpperCase()}`;
 }
 
 export async function createFarm(
@@ -247,5 +262,8 @@ export async function createFarm(
   await db
     .prepare("INSERT INTO farms(id,name,state) VALUES(?,?,?)")
     .run(id, name, JSON.stringify(seedLocalFarm(now)));
+  await db
+    .prepare("INSERT INTO farm_codes(farm_id,code) VALUES(?,?)")
+    .run(id, farmCode(id));
   return id;
 }

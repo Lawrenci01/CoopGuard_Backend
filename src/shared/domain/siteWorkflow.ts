@@ -433,9 +433,9 @@ export function surveyMissing(s: SiteSurvey): string[] {
   if (!clean(s.farm.ownerName)) missing.push("Owner or farm contact");
   if (s.house.lengthMetres <= 0 || s.house.widthMetres <= 0)
     missing.push("House dimensions");
-  if (!clean(s.power.hubPowerLocation))
+  if (!clean(s.power.hubPowerLocation) || s.power.hubPowerLocation === "unknown")
     missing.push("Candidate hub power location");
-  if (!clean(s.connectivity.hubLocation))
+  if (!clean(s.connectivity.hubLocation) || s.connectivity.hubLocation === "none")
     missing.push("Candidate hub location");
   if (!clean(s.connectivity.region))
     missing.push("Country or region for radio review");
@@ -452,7 +452,10 @@ export function surveyMissing(s: SiteSurvey): string[] {
     missing.push("Node locations, heights and power sources");
   if (!clean(s.operations.dayResponder))
     missing.push("Primary alert responder");
-  if (!clean(s.operations.powerFailureProcedure))
+  if (
+    !clean(s.operations.powerFailureProcedure) ||
+    s.operations.powerFailureProcedure === "no_plan"
+  )
     missing.push("Power-loss response");
   if (!s.decision.ownerAcknowledged) missing.push("Owner acknowledgement");
   if (!s.decision.technicianConfirmed) missing.push("Technician confirmation");
@@ -467,9 +470,15 @@ export function buildInstallationPlan(
   const restrictions: string[] = [];
   if (s.safety.wiring === "damaged")
     blockers.push("Visible wiring damage must be resolved.");
-  if (s.connectivity.hubLocation.trim() === "")
+  if (
+    s.connectivity.hubLocation.trim() === "" ||
+    s.connectivity.hubLocation === "none"
+  )
     blockers.push("Confirm a safe hub location.");
-  if (s.power.hubPowerLocation.trim() === "")
+  if (
+    s.power.hubPowerLocation.trim() === "" ||
+    s.power.hubPowerLocation === "unknown"
+  )
     blockers.push("Confirm reliable power for the hub.");
   if (s.sensors.plannedNodes < 1)
     blockers.push("Plan at least one sensing node.");
@@ -493,9 +502,12 @@ export function buildInstallationPlan(
         !item.location.trim() ||
         !item.model.trim() ||
         !item.electricalRating.trim() ||
+        item.electricalRating === "unknown" ||
         !item.stages.trim() ||
+        item.stages === "unknown" ||
         !item.circuit.trim() ||
-        !item.failureBehaviour.trim(),
+        !item.failureBehaviour.trim() ||
+        item.failureBehaviour === "unknown",
     )
   )
     restrictions.push(

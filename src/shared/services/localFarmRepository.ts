@@ -36,6 +36,14 @@ import {
   validSnapshot,
   type KeyValueStorage,
 } from "./snapshotCache";
+import {
+  deviceSetupProgress,
+  emptyDeviceSimulation,
+  parsePairingQr,
+  validDeviceSimulation,
+  type DeviceSimulation,
+  type VirtualNodeProfile,
+} from "../domain/deviceSimulation";
 
 export const LOCAL_FARM_KEY = "coopguard.localFarm.v1";
 export interface FlockCycle {
@@ -70,6 +78,7 @@ export interface LocalFarmState {
   people: { id: string; name: string; role: Role }[];
   retired: Sensor[];
   calibration: Record<string, number>;
+  deviceSimulation: DeviceSimulation;
 }
 export type LocalAction =
   | {
@@ -102,6 +111,15 @@ export type LocalAction =
       value: ChecklistValue;
     }
   | { type: "activateSite"; mode: "monitor" | "full" }
+  | { type: "createVirtualHub"; farmCode: string }
+  | {
+      type: "createVirtualNode";
+      farmCode: string;
+      profile: VirtualNodeProfile;
+      section: Section;
+    }
+  | { type: "pairVirtualDevice"; qr: string }
+  | { type: "removeVirtualDevice"; id: string }
   | { type: "ack"; id: string }
   | {
       type: "addSensor";
@@ -158,6 +176,7 @@ export function seedLocalFarm(now = Date.now()): LocalFarmState {
     inspections: [],
     retired: [],
     calibration: {},
+    deviceSimulation: emptyDeviceSimulation(),
     people: [{ id: "owner", name: "Farm owner", role: "owner" }],
   };
 }
@@ -203,7 +222,9 @@ export function validLocalFarm(value: unknown): value is LocalFarmState {
     if (s.house !== null && !validSurvey(s.house)) return false;
     if (!s.site)
       s.site = s.house ? workflowFromLegacyHouse(s.house) : emptySiteWorkflow();
+    if (!s.deviceSimulation) s.deviceSimulation = emptyDeviceSimulation();
     if (!validSiteWorkflow(s.site)) return false;
+    if (!validDeviceSimulation(s.deviceSimulation)) return false;
     if (
       typeof s.notifications !== "boolean" ||
       !["collecting", "unavailable"].includes(s.aiState)
@@ -432,6 +453,10 @@ export class LocalFarmRepository {
           !checklistComplete(s.site.installation, installationChecks)
         )
           throw new Error("Complete every required installation check first.");
+        if (!deviceSetupProgress(s.site, s.deviceSimulation).ready)
+          throw new Error(
+            "Pair the planned virtual hub and nodes before commissioning.",
+          );
         s.site.status = "commissioning";
         s.site.updatedAt = now;
         break;
@@ -489,6 +514,10 @@ export class LocalFarmRepository {
           !checklistComplete(s.site.trial, trialChecks)
         )
           throw new Error("Complete the monitoring trial checks first.");
+        if (!deviceSetupProgress(s.site, s.deviceSimulation).ready)
+          throw new Error(
+            "The planned hub and nodes must be paired and reporting.",
+          );
         if (
           a.mode === "full" &&
           s.site.plan?.recommendedMode !== "full_candidate"
@@ -498,6 +527,110 @@ export class LocalFarmRepository {
         s.site.activatedMode = a.mode;
         s.site.updatedAt = now;
         s.context.controlMode = a.mode;
+        break;
+      case "createVirtualHub": {
+        requireTechnicianRole();
+        if (!s.site.survey || !s.site.plan)
+          throw new Error(
+            "Complete the survey before creating the farm hub.",
+          );
+        if (s.deviceSimulation.hub?.status === "reporting")
+          throw new Error(
+            "Remove the paired virtual hub before creating another one.",
+          );
+        const suffix = Math.random().toString(36).slice(2, 10).toUpperCase();
+        s.deviceSimulation.hub = {
+          id: `HUB-${suffix}`,
+          farmCode: a.farmCode,
+          pairingCode: Math.random()
+            .toString(36)
+            .slice(2, 14)
+            .toUpperCase()
+            .padEnd(12, "0"),
+          status: "created",
+          createdAt: now,
+        };
+        s.deviceSimulation.nodes = [];
+        break;
+      }
+      case "createVirtualNode": {
+        requireTechnicianRole();
+        const hub = s.deviceSimulation.hub;
+        if (!hub || hub.status !== "reporting")
+          throw new Error("Pair the virtual hub before creating nodes.");
+        if (!sections.includes(a.section))
+          throw new Error("Choose a valid house section.");
+        const suffix = Math.random().toString(36).slice(2, 10).toUpperCase();
+        s.deviceSimulation.nodes.push({
+          id: `NODE-${suffix}`,
+          farmCode: a.farmCode,
+          pairingCode: Math.random()
+            .toString(36)
+            .slice(2, 14)
+            .toUpperCase()
+            .padEnd(12, "0"),
+          profile: a.profile,
+          section: a.section,
+          status: "created",
+          createdAt: now,
+        });
+        break;
+      }
+      case "pairVirtualDevice": {
+        requireTechnicianRole();
+        const payload = parsePairingQr(a.qr);
+        if (payload.kind === "hub") {
+          const hub = s.deviceSimulation.hub;
+          if (
+            !hub ||
+            hub.id !== payload.deviceId ||
+            hub.farmCode !== payload.farmCode ||
+            hub.pairingCode !== payload.pairingCode
+          )
+            throw new Error(
+              "This hub QR does not belong to the selected farm.",
+            );
+          Object.assign(hub, { status: "reporting", pairedAt: now });
+        } else {
+          const hub = s.deviceSimulation.hub;
+          const node = s.deviceSimulation.nodes.find(
+            (item) => item.id === payload.deviceId,
+          );
+          if (
+            !hub ||
+            hub.status !== "reporting" ||
+            !node ||
+            node.farmCode !== payload.farmCode ||
+            node.pairingCode !== payload.pairingCode ||
+            node.profile !== payload.profile
+          )
+            throw new Error(
+              "This node QR does not belong to the selected farm or hub.",
+            );
+          Object.assign(node, {
+            status: "reporting",
+            pairedAt: now,
+            hubId: hub.id,
+          });
+        }
+        break;
+      }
+      case "removeVirtualDevice":
+        requireTechnicianRole();
+        if (["normal_monitor", "normal_control"].includes(s.site.status))
+          throw new Error(
+            "Deactivate the installed house before removing paired devices.",
+          );
+        if (s.deviceSimulation.hub?.id === a.id) {
+          s.deviceSimulation = emptyDeviceSimulation();
+        } else {
+          const count = s.deviceSimulation.nodes.length;
+          s.deviceSimulation.nodes = s.deviceSimulation.nodes.filter(
+            (node) => node.id !== a.id,
+          );
+          if (count === s.deviceSimulation.nodes.length)
+            throw new Error("The virtual device was not found.");
+        }
         break;
       case "ack":
         s.snapshot = await engine.acknowledge(a.id, s.context);
