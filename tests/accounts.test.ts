@@ -107,6 +107,64 @@ test("farm reprovision can initialize a confirmed empty cloud database", async (
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 2);
 });
 
+test("admin can create a farm record with customer metadata and generated credentials", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-farm-"));
+  const path = join(dir, "test.sqlite");
+  const db = await openDatabase(path);
+  t.after(async () => {
+    await db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  await db.batch([
+    {
+      sql: "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
+      args: ["admin-1", "team.admin", "Team admin", "admin", await hashPassword("Admin password 123!"), Date.now()],
+    },
+  ]);
+  const app = await createApp(db);
+  const login = async () => {
+    const r = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: { username: "team.admin", password: "Admin password 123!" },
+    });
+    assert.equal(r.statusCode, 200, r.body);
+    return r.json<Session>();
+  };
+  const admin = await login();
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/admin/farms",
+    headers: { authorization: `Bearer ${admin.token}` },
+    payload: {
+      farmName: "North Valley Poultry",
+      customerName: "North Valley Coop",
+      contactName: "Casey Green",
+      contactPhone: "+1 555 010 2020",
+      address: "12 River Lane, Bayview",
+      ownerUsername: "north.owner",
+      ownerName: "North Valley Owner",
+      technicianUsername: "north.tech",
+      technicianName: "North Valley Tech",
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  const body = response.json<{ farmId: string; farmCode: string; qr: string; owner: { username: string; password: string }; technician: { username: string; password: string } }>();
+  assert.match(body.farmCode, /^CG-PH-/);
+  assert.equal(body.qr.startsWith("coopguard://farm/open?"), true);
+  assert.equal(body.owner.username, "north.owner");
+  assert.equal(body.technician.username, "north.tech");
+  assert.equal(body.owner.password.length >= 12, true);
+  assert.equal(body.technician.password.length >= 12, true);
+  const farm = await db.prepare("SELECT name,customer_name,contact_phone,address FROM farms WHERE id=?").get(body.farmId);
+  assert.equal(farm?.name, "North Valley Poultry");
+  assert.equal(farm?.customer_name, "North Valley Coop");
+  assert.equal(farm?.contact_phone, "+1 555 010 2020");
+  assert.equal(farm?.address, "12 River Lane, Bayview");
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?").get(body.farmId))!.n, 2);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users WHERE username IN (?,?)").get("north.owner", "north.tech"))!.n, 2);
+});
+
 test("shared accounts, farm permissions, offline replay and durable records", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "coopguard-accounts-"));
   const path = join(dir, "test.sqlite");

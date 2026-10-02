@@ -157,12 +157,16 @@ class HubSyncDatabase implements CoopDatabase {
 const schema = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('owner','worker','technician')),
+    role TEXT NOT NULL CHECK(role IN ('owner','worker','technician','admin')),
     password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
     must_change INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS farms (id TEXT PRIMARY KEY, name TEXT NOT NULL,
-    state TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS farms (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, customer_name TEXT,
+    contact_name TEXT, contact_phone TEXT, address TEXT,
+    state TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT 0
+  )`,
   `CREATE TABLE IF NOT EXISTS farm_codes (
     farm_id TEXT PRIMARY KEY REFERENCES farms(id), code TEXT NOT NULL UNIQUE
   )`,
@@ -238,6 +242,20 @@ export async function openDatabase(
     );
   } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
+  const farmColumns = new Set(
+    (await database.prepare("PRAGMA table_info(farms)").all()).map((row) => String(row.name)),
+  );
+  const columnsToAdd = [
+    ["customer_name", "TEXT"],
+    ["contact_name", "TEXT"],
+    ["contact_phone", "TEXT"],
+    ["address", "TEXT"],
+    ["created_at", "INTEGER NOT NULL DEFAULT 0"],
+  ] as const;
+  for (const [column, definition] of columnsToAdd) {
+    if (!farmColumns.has(column))
+      await database.prepare(`ALTER TABLE farms ADD COLUMN ${column} ${definition}`).run();
+  }
   const farms = await database.prepare("SELECT id FROM farms").all();
   if (farms.length)
     await database.batch(
@@ -257,11 +275,29 @@ export async function createFarm(
   db: CoopDatabase,
   name: string,
   now = Date.now(),
+  details: {
+    customerName?: string | null;
+    contactName?: string | null;
+    contactPhone?: string | null;
+    address?: string | null;
+  } = {},
 ) {
   const id = randomUUID();
   await db
-    .prepare("INSERT INTO farms(id,name,state) VALUES(?,?,?)")
-    .run(id, name, JSON.stringify(seedLocalFarm(now)));
+    .prepare(
+      "INSERT INTO farms(id,name,customer_name,contact_name,contact_phone,address,state,revision,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      id,
+      name,
+      details.customerName ?? null,
+      details.contactName ?? null,
+      details.contactPhone ?? null,
+      details.address ?? null,
+      JSON.stringify(seedLocalFarm(now)),
+      0,
+      now,
+    );
   await db
     .prepare("INSERT INTO farm_codes(farm_id,code) VALUES(?,?)")
     .run(id, farmCode(id));

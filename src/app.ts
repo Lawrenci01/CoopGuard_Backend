@@ -15,7 +15,7 @@ import {
 import { surveyRecommendation } from "./shared/domain/setup";
 import type { Role } from "./shared/domain/types";
 import type { FarmResponse, Identity, Session } from "./apiTypes";
-import type { BatchStatement, CoopDatabase } from "./database";
+import { createFarm, type BatchStatement, type CoopDatabase } from "./database";
 
 type User = {
   id: string;
@@ -117,11 +117,14 @@ export async function createApp(
         role: user.role,
         mustChangePassword: !!user.must_change,
       },
-      farms: (await db
-        .prepare(
-          "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
-        )
-        .all(user.id)) as { id: string; name: string; code: string }[],
+      farms:
+        user.role === "admin"
+          ? []
+          : ((await db
+              .prepare(
+                "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
+              )
+              .all(user.id)) as { id: string; name: string; code: string }[]),
     };
   }
   async function issue(user: User): Promise<Session> {
@@ -346,6 +349,85 @@ export async function createApp(
       return await issue({ ...fresh, must_change: 0, password_hash: hash });
     },
   );
+  app.post("/v1/admin/farms", async (request) => {
+    const user = await account(request, false);
+    if (user.role !== "admin")
+      fail(403, "Only a team admin can create farms.");
+    const body = parse(
+      z
+        .object({
+          farmName: z.string().trim().min(1).max(80),
+          customerName: z.string().trim().min(1).max(120).optional(),
+          contactName: z.string().trim().min(1).max(120).optional(),
+          contactPhone: z.string().trim().min(1).max(40).optional(),
+          address: z.string().trim().min(1).max(200).optional(),
+          ownerUsername: username,
+          ownerName: name,
+          technicianUsername: username,
+          technicianName: name,
+        })
+        .strict(),
+      request.body,
+    );
+    const ownerUsername = body.ownerUsername,
+      technicianUsername = body.technicianUsername;
+    if (ownerUsername === technicianUsername)
+      fail(400, "Use separate usernames for the owner and technician.");
+    for (const username of [ownerUsername, technicianUsername]) {
+      if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
+        fail(409, "This username is unavailable. Choose a unique account name.");
+    }
+    const ownerPassword = temporaryPassword(),
+      technicianPassword = temporaryPassword();
+    const farmId = await createFarm(db, body.farmName, now(), {
+      customerName: body.customerName,
+      contactName: body.contactName,
+      contactPhone: body.contactPhone,
+      address: body.address,
+    });
+    const farmCode = (await db
+      .prepare("SELECT code FROM farm_codes WHERE farm_id=?")
+      .get(farmId)) as { code: string } | undefined;
+    if (!farmCode) fail(500, "Farm code generation failed.");
+    const ownerHash = await hashPassword(ownerPassword),
+      technicianHash = await hashPassword(technicianPassword);
+    const ownerUserId = randomUUID(),
+      technicianUserId = randomUUID();
+    await db.batch([
+      {
+        sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'owner',?,?)",
+        args: [ownerUserId, ownerUsername, body.ownerName, ownerHash, now()],
+      },
+      {
+        sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'technician',?,?)",
+        args: [technicianUserId, technicianUsername, body.technicianName, technicianHash, now()],
+      },
+      {
+        sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+        args: [ownerUserId, farmId],
+      },
+      {
+        sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+        args: [technicianUserId, farmId],
+      },
+      auditStatement(user, farmId, "farm_created", farmId),
+    ]);
+    return {
+      farmId,
+      farmCode: farmCode.code,
+      qr: `coopguard://farm/open?version=1&farm=${encodeURIComponent(farmCode.code)}`,
+      owner: {
+        username: ownerUsername,
+        name: body.ownerName,
+        password: ownerPassword,
+      },
+      technician: {
+        username: technicianUsername,
+        name: body.technicianName,
+        password: technicianPassword,
+      },
+    };
+  });
   app.get("/v1/farms/:farmId", (request) =>
     serial(async () => {
       const { user, farmId } = await access(request);
