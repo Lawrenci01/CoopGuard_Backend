@@ -26,13 +26,13 @@ Remove-Item Env:TURSO_AUTH_TOKEN
 
 Save the generated temporary credentials securely, sign in and change both passwords. Delete the private output file after the credentials have been transferred.
 
-To replace every account assigned to an existing pilot farm while preserving its survey and farm records, run:
+To replace every account assigned to an existing pilot farm while preserving its survey and farm records, run the private prompt helper:
 
 ```powershell
-npm run reprovision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --confirm "Pilot farm" --output .local/render-replacement-accounts.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\reprovision-render.ps1 -DatabaseUrl "libsql://your-database-your-account.turso.io"
 ```
 
-The command requires Turso credentials in the same PowerShell window, revokes old sessions, removes the farm's old memberships, and writes fresh temporary passwords only to the named private file. The exact farm name after `--confirm` is the destructive-action safeguard.
+The helper asks for the Turso token with hidden input, revokes old sessions, removes the farm's old memberships, and writes fresh temporary passwords only to a timestamped private file under `.local`. It defaults to farm `Pilot farm` and usernames `cg.owner` / `cg.technician`; pass `-Farm`, `-Owner`, or `-Technician` to change them. The underlying CLI requires the exact farm name after `--confirm` as its destructive-action safeguard.
 
 Render Free sleeps after inactivity, so the first request can be slow while it wakes. Turso keeps the database durable across Render restarts and redeploys. Both free services have usage and availability limits and are suitable for development and an early pilot, not a commercial uptime commitment.
 
