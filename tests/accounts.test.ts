@@ -70,6 +70,26 @@ test("farm reprovision revokes old accounts while preserving the farm", async (t
   );
 });
 
+test("farm reprovision can initialize a confirmed empty cloud database", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-empty-cloud-"));
+  const db = await openDatabase(join(dir, "test.sqlite"));
+  t.after(async () => {
+    await db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const result = await reprovisionFarmAccounts(
+    db,
+    "CoopGuard pilot farm",
+    "cg.owner",
+    "cg.technician",
+    Date.now(),
+    true,
+  );
+  assert.equal(result.farmCreated, true);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM farms").get())!.n, 1);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 2);
+});
+
 test("shared accounts, farm permissions, offline replay and durable records", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "coopguard-accounts-"));
   const path = join(dir, "test.sqlite");

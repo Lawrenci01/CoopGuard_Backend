@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CoopDatabase } from "./database";
+import { createFarm, type CoopDatabase } from "./database";
 import { hashPassword, temporaryPassword } from "./passwords";
 
 export interface NewCredential {
@@ -14,12 +14,25 @@ export async function reprovisionFarmAccounts(
   ownerUsername: string,
   technicianUsername: string,
   now = Date.now(),
-): Promise<{ farmId: string; credentials: NewCredential[] }> {
+  createIfMissing = false,
+): Promise<{ farmId: string; farmCreated: boolean; credentials: NewCredential[] }> {
   const allFarms = await db.prepare("SELECT id,name FROM farms ORDER BY name").all();
   const farms = allFarms.filter(
     (farm) => String(farm.name).toLocaleLowerCase() === farmName.toLocaleLowerCase(),
   );
-  if (farms.length !== 1) {
+  let farmCreated = false;
+  let farmId: string;
+  if (farms.length === 1) farmId = farms[0]!.id as string;
+  else if (farms.length === 0 && allFarms.length === 0 && createIfMissing) {
+    for (const username of [ownerUsername, technicianUsername]) {
+      if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
+        throw new Error(
+          `The empty database contains an orphaned ${username} account. Choose a new username or repair it first.`,
+        );
+    }
+    farmId = await createFarm(db, farmName, now);
+    farmCreated = true;
+  } else {
     const available = allFarms.map((farm) => String(farm.name)).join(", ");
     throw new Error(
       farms.length
@@ -29,7 +42,6 @@ export async function reprovisionFarmAccounts(
           : "Farm not found. This Turso database does not contain a farm yet.",
     );
   }
-  const farmId = farms[0]!.id as string;
   const members = await db
     .prepare("SELECT user_id FROM memberships WHERE farm_id=?")
     .all(farmId);
@@ -90,5 +102,5 @@ export async function reprovisionFarmAccounts(
     { sql: "DELETE FROM login_attempts" },
     ...inserts,
   ]);
-  return { farmId, credentials };
+  return { farmId, farmCreated, credentials };
 }

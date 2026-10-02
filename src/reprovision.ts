@@ -13,6 +13,7 @@ const { values } = parseArgs({
     technician: { type: "string" },
     confirm: { type: "string" },
     output: { type: "string" },
+    "create-if-missing": { type: "boolean", default: false },
   },
 });
 if (!turso)
@@ -36,7 +37,14 @@ mkdirSync(dirname(output), { recursive: true });
 
 const db = await openDatabase(databasePath, turso, "cloud");
 try {
-  const result = await reprovisionFarmAccounts(db, farmName, owner, technician);
+  const result = await reprovisionFarmAccounts(
+    db,
+    farmName,
+    owner,
+    technician,
+    Date.now(),
+    values["create-if-missing"],
+  );
   const body = result.credentials
     .map(
       (entry) =>
@@ -45,10 +53,12 @@ try {
     .join("\n\n");
   writeFileSync(
     output,
-    `CoopGuard replacement credentials - keep private\n\nFarm: ${farmName}\nFarm ID: ${result.farmId}\n\n${body}\n\nChange each temporary password at first sign-in. Old farm memberships and sessions were removed. Farm setup and records were preserved.\n`,
+    `CoopGuard ${result.farmCreated ? "initial cloud" : "replacement"} credentials - keep private\n\nFarm: ${farmName}\nFarm ID: ${result.farmId}\n\n${body}\n\nChange each temporary password at first sign-in. ${result.farmCreated ? "A new cloud farm was created because the Turso database was empty." : "Old farm memberships and sessions were removed. Farm setup and records were preserved."}\n`,
     { encoding: "utf8", mode: 0o600, flag: "wx" },
   );
-  console.log(`Farm accounts replaced. Private credentials file: ${output}`);
+  console.log(
+    `${result.farmCreated ? "Cloud farm and accounts created" : "Farm accounts replaced"}. Private credentials file: ${output}`,
+  );
 } finally {
   await db.close();
 }

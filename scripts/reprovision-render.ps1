@@ -19,6 +19,7 @@ try {
     '--owner', $Owner,
     '--technician', $Technician,
     '--confirm', $Farm,
+    '--create-if-missing',
     '--output', $output
   )
   & npm.cmd @npmArguments
