@@ -32,7 +32,7 @@ To replace every account assigned to an existing pilot farm while preserving its
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\reprovision-render.ps1 -DatabaseUrl "libsql://your-database-your-account.turso.io"
 ```
 
-The helper asks for the Turso token with hidden input, revokes old sessions, removes the farm's old memberships, and writes fresh temporary passwords only to a timestamped private file under `.local`. It defaults to farm `Pilot farm` and usernames `cg.owner` / `cg.technician`; pass `-Farm`, `-Owner`, or `-Technician` to change them. The underlying CLI requires the exact farm name after `--confirm` as its destructive-action safeguard.
+The helper asks for the Turso token with hidden input, revokes old sessions, removes the farm's old memberships, and writes fresh temporary passwords only to a timestamped private file under `.local`. It defaults to farm `CoopGuard pilot farm` and usernames `cg.owner` / `cg.technician`; pass `-Farm`, `-Owner`, or `-Technician` to change them. The underlying CLI requires the farm name after `--confirm` as its destructive-action safeguard.
 
 Render Free sleeps after inactivity, so the first request can be slow while it wakes. Turso keeps the database durable across Render restarts and redeploys. Both free services have usage and availability limits and are suitable for development and an early pilot, not a commercial uptime commitment.
 

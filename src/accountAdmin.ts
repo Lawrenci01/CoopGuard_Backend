@@ -15,11 +15,20 @@ export async function reprovisionFarmAccounts(
   technicianUsername: string,
   now = Date.now(),
 ): Promise<{ farmId: string; credentials: NewCredential[] }> {
-  const farms = await db.prepare("SELECT id FROM farms WHERE name=?").all(farmName);
-  if (farms.length !== 1)
+  const allFarms = await db.prepare("SELECT id,name FROM farms ORDER BY name").all();
+  const farms = allFarms.filter(
+    (farm) => String(farm.name).toLocaleLowerCase() === farmName.toLocaleLowerCase(),
+  );
+  if (farms.length !== 1) {
+    const available = allFarms.map((farm) => String(farm.name)).join(", ");
     throw new Error(
-      farms.length ? "More than one farm has that name. Use a unique farm name first." : "Farm not found.",
+      farms.length
+        ? "More than one farm has that name. Use a unique farm name first."
+        : available
+          ? `Farm not found. Available farm names: ${available}`
+          : "Farm not found. This Turso database does not contain a farm yet.",
     );
+  }
   const farmId = farms[0]!.id as string;
   const members = await db
     .prepare("SELECT user_id FROM memberships WHERE farm_id=?")
