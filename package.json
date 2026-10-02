@@ -1,0 +1,26 @@
+{
+  "name": "coopguard-backend",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "provision": "tsx src/provision.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "tls": "node scripts/create-local-tls.mjs"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "10.3.0",
+    "fastify": "5.12.5",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  }
+}
