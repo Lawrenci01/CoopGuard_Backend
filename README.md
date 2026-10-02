@@ -4,6 +4,8 @@ Implemented **Node.js + TypeScript, Fastify and SQLite** service for real shared
 
 ## Deploy on Render
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Lawrenci01/CoopGuard_Backend)
+
 The repository-root [`render.yaml`](render.yaml) defines one Singapore-region Node web service with Render-managed public HTTPS and a 1 GB persistent disk mounted at `/var/data`. Render terminates public TLS, forwards HTTP to the process, supplies `PORT`, and is trusted as the application proxy. SQLite is stored at `/var/data/coopguard.sqlite`.
 
 1. Push this backend repository to GitHub, GitLab or Bitbucket.
