@@ -107,6 +107,46 @@ test("farm reprovision can initialize a confirmed empty cloud database", async (
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 2);
 });
 
+test("the retired fixed-password admin is disabled and its sessions are revoked", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-retired-"));
+  const path = join(dir, "test.sqlite");
+  const db = await openDatabase(path);
+  await db.batch([
+    {
+      sql: "INSERT INTO users(id,username,name,role,password_hash,active,must_change,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      args: [
+        "legacy-admin",
+        "team.admin",
+        "Team Admin",
+        "admin",
+        await hashPassword("password.admin123"),
+        1,
+        0,
+        Date.now(),
+      ],
+    },
+    {
+      sql: "INSERT INTO sessions(digest,user_id,expires_at) VALUES(?,?,?)",
+      args: ["legacy-admin-session", "legacy-admin", Date.now() + 60_000],
+    },
+  ]);
+  await db.close();
+  const reopened = await openDatabase(path);
+  t.after(async () => {
+    await reopened.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const user = await reopened
+    .prepare("SELECT active,must_change FROM users WHERE id=?")
+    .get("legacy-admin");
+  assert.equal(user?.active, 0);
+  assert.equal(user?.must_change, 1);
+  assert.equal(
+    await reopened.prepare("SELECT 1 FROM sessions WHERE user_id=?").get("legacy-admin"),
+    undefined,
+  );
+});
+
 test("admin can create a farm record with customer metadata and generated credentials", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-farm-"));
   const path = join(dir, "test.sqlite");

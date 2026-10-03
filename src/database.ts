@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { verifyPassword } from "./passwords";
 import { seedLocalFarm } from "./shared/services/localFarmRepository";
 
 export type SqlArgument = string | number | bigint | Uint8Array | null;
@@ -189,6 +190,20 @@ const schema = [
   "CREATE TABLE IF NOT EXISTS login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, until_at INTEGER NOT NULL)",
 ];
 
+async function disableLegacyDefaultAdmin(db: CoopDatabase) {
+  const user = await db
+    .prepare("SELECT id,password_hash FROM users WHERE username=? AND role='admin'")
+    .get("team.admin");
+  if (!user || !(await verifyPassword("password.admin123", String(user.password_hash)))) return;
+  await db.batch([
+    {
+      sql: "UPDATE users SET active=0,must_change=1 WHERE id=?",
+      args: [user.id as string],
+    },
+    { sql: "DELETE FROM sessions WHERE user_id=?", args: [user.id as string] },
+  ]);
+}
+
 export async function openDatabase(
   path: string,
   turso?: { url: string; authToken: string },
@@ -242,6 +257,7 @@ export async function openDatabase(
     );
   } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
+  await disableLegacyDefaultAdmin(database);
   const farmColumns = new Set(
     (await database.prepare("PRAGMA table_info(farms)").all()).map((row) => String(row.name)),
   );

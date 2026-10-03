@@ -254,7 +254,7 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.6.1",
+    version: "0.6.2",
     readings: "sample",
     mode: options.deploymentMode ?? "standalone",
     ...(options.deploymentMode === "hub" && options.hubId
