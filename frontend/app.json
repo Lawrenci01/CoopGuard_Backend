@@ -4,7 +4,7 @@
     "slug": "coopguard",
     "scheme": "coopguard",
     "platforms": ["ios", "android"],
-    "version": "0.6.3",
+    "version": "0.6.4",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": {
@@ -12,7 +12,7 @@
       "bundleIdentifier": "com.coopguard.app"
     },
     "android": {
-      "versionCode": 13,
+      "versionCode": 14,
       "package": "com.coopguard.app",
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
@@ -24,7 +24,10 @@
     "plugins": [
       "expo-font",
       "expo-secure-store",
-      ["expo-camera", { "cameraPermission": "Allow CoopGuard to scan farm hub and node QR codes." }],
+      [
+        "expo-camera",
+        { "cameraPermission": "Allow CoopGuard to scan farm hub and node QR codes." }
+      ],
       "./plugins/withLocalTls"
     ]
   }

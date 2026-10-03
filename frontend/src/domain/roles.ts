@@ -2,7 +2,7 @@ import type { Role, TabName } from './types';
 export const roleTabs: Record<Role, TabName[]> = {
   owner: ['Dashboard', 'Alerts', 'Heat Map', 'Analytics', 'Devices'],
   worker: ['Dashboard', 'Alerts', 'Heat Map', 'Notes'],
-  technician: ['Dashboard', 'Alerts', 'Heat Map', 'Analytics', 'Devices'],
+  technician: [],
   admin: [],
 };
 export const roleHomeTitle: Record<Role, string> = {

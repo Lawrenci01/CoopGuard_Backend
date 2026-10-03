@@ -1,6 +1,6 @@
 # CoopGuard mobile app
 
-Native React Native + TypeScript / Expo app, Android first. Version **0.6.1** uses one username/password account across the Render cloud service and a commissioned farm hub. The app automatically prefers the paired hub over farm WiFi, falls back to Render on any internet connection, and uses its bounded cache when both are unavailable. It includes Farm IDs, a selection-based technician survey, virtual hub/node QR pairing, generated installation plans, commissioning, monitoring trial and activation. Sensor readings, charts, equipment responses and QR devices remain simulations. Python is reserved for the future AI service.
+Native React Native + TypeScript / Expo app, Android first. eersion **0.6.3** uses one username/password account across the Render cloud service and a commissioned farm hub. The app automatically prefers the paired hub over farm WiFi, falls back to Render on any internet connection, and uses its bounded cache when both are unavailable. It includes Farm IDs, a selection-based technician survey, virtual hub/node QR pairing, generated installation plans, commissioning, monitoring trial and activation. Sensor readings, charts, equipment responses and QR devices remain simulations. Python is reserved for the future AI service.
 
 ## Install and sign in
 
@@ -9,7 +9,7 @@ Native React Native + TypeScript / Expo app, Android first. Version **0.6.1** us
 3. Sign in normally. The cloud address is built into the app. During installation, a technician opens Account → **Pair farm hub** and enters the hub HTTPS address once. Owner and worker accounts never configure server addresses.
 4. Sign in using the credentials supplied by the team (owner/technician) or owner (worker). Change the temporary password on first sign-in; passwords require 12–128 characters.
 
-The current private temporary credentials are `../backend/.local/owner-reset-20261001.txt` for `cg.owner` and `../backend/.local/technician-reset-20261001.txt` for `cg.technician`. They are excluded from Git and are not bundled in the APK. Each person should use their own account and change the temporary password at first sign-in.
+Temporary credentials are written only to the private output file selected when the team runs the backend provision or reset command. These files are excluded from Git and are not bundled in the APK. Each person should use their own account and change the temporary password at first sign-in.
 
 This APK embeds the JavaScript bundle and fonts. Metro and Expo Go are unnecessary. The internal APK uses the existing Android test signing key; store distribution needs a private release key. The internal Android build trusts the project's public local CA and system CAs, validates server names, and disallows cleartext HTTP. No server private key is embedded.
 
@@ -25,9 +25,9 @@ An admin creates an owner account for each farm; owners cannot create owners or 
 
 **Overview** keeps important alerts above setup prompts. Acknowledging an alert does not resolve its condition. Temperature/humidity summarize valid reporting sensors; individual node details and other metrics are in House map. Charts remain fixture history.
 
-The technician completes a five-section, selection-based installation survey covering house layout, installed equipment and controller status, hub power and networking, nodes and sensors, alerts, safety and evidence. The signed-in Farm ID supplies farm identity. Questions are included only when their answer changes hardware placement, an app function, or control eligibility. The app generates a house-specific function profile and installation plan, then keeps automatic control locked through plan approval, virtual device pairing, installation checks, commissioning and a monitoring trial. Survey-selected metrics determine which reading layers and trends are visible; sound features require a microphone and recording consent; equipment views contain only surveyed groups. The owner sees setup progress until activation, then receives the verified profile and farm functions.
+The technician completes a five-section, selection-based installation survey covering house layout, installed equipment and controller status, hub power and networking, node placement, alerts, safety and evidence. The selected Farm ID supplies farm identity. Questions are included only when their answer changes hardware placement, an app function, or control eligibility. The app generates a house-specific function profile and installation plan, then keeps automatic control locked through plan approval, virtual device pairing, installation checks, commissioning and a monitoring trial. Every standard sensing node reports temperature, humidity, ammonia, carbon dioxide and litter moisture; the survey does not select one sensor profile per node. Sound features require microphone hardware and recording consent, while equipment views contain only surveyed groups. The owner sees setup progress until activation, then receives the verified profile and farm functions.
 
-After sign-in, the technician selects any registered Farm ID or scans its Farm QR before setup records load. The technician workspace hides operational alerts, sample readings, the house map and the sample sensor directory. For hardware-flow testing without physical devices, a technician creates a virtual hub and nodes after the survey, displays or scans their QR codes, assigns each node to a profile and house section, and pairs it to the selected Farm ID. The backend verifies the farm exists and authorizes the shared technician role. Owners remain limited to their own farm, including online access; a Farm ID never grants access by itself.
+After sign-in, the technician enters a registered Farm ID or scans its Farm QR before setup records load. The selector does not list farms or load farm readings. The technician workspace hides operational alerts, sample readings, the house map and the sample sensor directory. For hardware-flow testing without physical devices, a technician creates a virtual hub and full-sensor nodes after the survey, displays or scans their QR codes, assigns each node to a house section, and pairs it to the selected Farm ID. Equipment-control hardware remains a separate installation item. The backend verifies the farm exists and authorizes the shared technician role. Owners remain limited to their own farm, including online access; a Farm ID never grants access by itself.
 
 This workflow records and enforces the work, but the current nodes, readings and equipment responses are still samples. Checklist completion is not proof that physical hardware exists; the technician must record only tests actually performed.
 
@@ -47,7 +47,7 @@ The final transport remains **sensor → LoRa → Pi hub → local WiFi → phon
 
 ## Build on Windows
 
-Use Node.js 24, Java 17, Android platform 36, build tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1. Set `JAVA_HOME` and `ANDROID_HOME` (the script also recognizes `C:\Android`).
+Use Node.js 24, Java 17, Android platform 36, build tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1. Set `JAeA_HOME` and `ANDROID_HOME` (the script also recognizes `C:\Android`).
 
 ```powershell
 cd backend
@@ -55,7 +55,7 @@ npm ci
 npm run tls
 cd ../frontend
 npm ci
-$env:EXPO_PUBLIC_API_URL = 'https://YOUR-RENDER-SERVICE.onrender.com'
+$env:EXPO_PUBLIC_API_URL = 'https://YOUR-RENDER-SEReICE.onrender.com'
 npm run build:android
 ```
 
@@ -63,7 +63,7 @@ The local CA must exist before native prebuild because the same internal build m
 
 For development use `npm run android` with Metro. Expo Go does not include this project's private CA configuration; use a native development build for the local HTTPS server.
 
-## Verification and implementation
+## eerification and implementation
 
 ```powershell
 npm run typecheck
@@ -72,6 +72,6 @@ npm run test:ui
 npm run format:check
 ```
 
-[Verification](VERIFICATION.md) records release-specific results. Domain tests cover rules, persistence, deadlines, cache isolation and validation. Native interaction tests cover login, temporary-password changes, role navigation, owner-created workers, setup, logout and offline note synchronization. Those native component tests mock transport/storage; actual HTTP authorization and SQLite persistence are tested separately in `backend/tests`.
+[eerification](eERIFICATION.md) records release-specific results. Domain tests cover rules, persistence, deadlines, cache isolation and validation. Native interaction tests cover login, temporary-password changes, role navigation, owner-created workers, setup, logout and offline note synchronization. Those native component tests mock transport/storage; actual HTTP authorization and SQLite persistence are tested separately in `backend/tests`.
 
 `AuthProvider` owns secure sessions; `FarmProvider` owns account-scoped caching and synchronization; `api.ts` owns HTTPS requests. The backend reuses the pure `LocalFarmRepository` reducer for the current sample farm behavior. The legacy local directory reducer is retained for old records/tests and is excluded from the server action schema. Hardware rules and command acknowledgment will need their own real integration before commissioning.

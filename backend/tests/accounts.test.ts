@@ -120,10 +120,10 @@ test("farm reprovision can initialize a confirmed empty cloud database", async (
   );
   assert.equal(result.farmCreated, true);
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM farms").get())!.n, 1);
-  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 3);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 2);
 });
 
-test("fresh databases bootstrap the default team admin account", async (t) => {
+test("fresh databases do not expose a predictable default admin account", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-bootstrap-"));
   const path = join(dir, "test.sqlite");
   const db = await openDatabase(path);
@@ -132,27 +132,54 @@ test("fresh databases bootstrap the default team admin account", async (t) => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const user = await db
-    .prepare("SELECT username,role,password_hash FROM users WHERE username=?")
-    .get("team.admin");
-  assert.ok(user);
-  assert.equal(user.username, "team.admin");
-  assert.equal(user.role, "admin");
-  assert.equal(
-    await db
-      .prepare("SELECT COUNT(*) n FROM users WHERE role='admin'")
-      .get()!
-      .then((row) => (row as { n: number }).n),
-    1,
-  );
-
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 0);
   const app = await createApp(db);
   const login = await app.inject({
     method: "POST",
     url: "/v1/auth/login",
     payload: { username: "team.admin", password: "password.admin123" },
   });
-  assert.equal(login.statusCode, 200, login.body);
+  assert.equal(login.statusCode, 401, login.body);
+});
+
+test("the retired fixed-password admin is disabled and its sessions are revoked", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-retired-"));
+  const path = join(dir, "test.sqlite");
+  const db = await openDatabase(path);
+  await db.batch([
+    {
+      sql: "INSERT INTO users(id,username,name,role,password_hash,active,must_change,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      args: [
+        "legacy-admin",
+        "team.admin",
+        "Team Admin",
+        "admin",
+        await hashPassword("password.admin123"),
+        1,
+        0,
+        Date.now(),
+      ],
+    },
+    {
+      sql: "INSERT INTO sessions(digest,user_id,expires_at) VALUES(?,?,?)",
+      args: ["legacy-admin-session", "legacy-admin", Date.now() + 60_000],
+    },
+  ]);
+  await db.close();
+  const reopened = await openDatabase(path);
+  t.after(async () => {
+    await reopened.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const user = await reopened
+    .prepare("SELECT active,must_change FROM users WHERE id=?")
+    .get("legacy-admin");
+  assert.equal(user?.active, 0);
+  assert.equal(user?.must_change, 1);
+  assert.equal(
+    await reopened.prepare("SELECT 1 FROM sessions WHERE user_id=?").get("legacy-admin"),
+    undefined,
+  );
 });
 
 test("legacy user schema without admin is upgraded automatically", async (t) => {
@@ -189,11 +216,11 @@ test("legacy user schema without admin is upgraded automatically", async (t) => 
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const admin = await reopened
-    .prepare("SELECT role FROM users WHERE username=?")
-    .get("team.admin");
-  assert.ok(admin);
-  assert.equal(admin.role, "admin");
+  const definition = await reopened
+    .prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='users'")
+    .get();
+  assert.match(String(definition?.sql), /'admin'/);
+  assert.ok(await reopened.prepare("SELECT 1 FROM users WHERE username=?").get("legacy.owner"));
 });
 
 test("admin can create a farm record with customer metadata and generated credentials", async (t) => {
@@ -204,12 +231,24 @@ test("admin can create a farm record with customer metadata and generated creden
     await db.close();
     rmSync(dir, { recursive: true, force: true });
   });
+  await db
+    .prepare(
+      "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
+    )
+    .run(
+      "admin-1",
+      "team.admin",
+      "Team admin",
+      "admin",
+      await hashPassword("Admin password 123!"),
+      Date.now(),
+    );
   const app = await createApp(db);
   const login = async () => {
     const r = await app.inject({
       method: "POST",
       url: "/v1/auth/login",
-      payload: { username: "team.admin", password: "password.admin123" },
+      payload: { username: "team.admin", password: "Admin password 123!" },
     });
     assert.equal(r.statusCode, 200, r.body);
     return r.json<Session>();
@@ -227,8 +266,6 @@ test("admin can create a farm record with customer metadata and generated creden
       address: "12 River Lane, Bayview",
       ownerUsername: "north.owner",
       ownerName: "North Valley Owner",
-      technicianUsername: "north.tech",
-      technicianName: "North Valley Tech",
     },
   });
   assert.equal(response.statusCode, 200, response.body);
@@ -237,20 +274,12 @@ test("admin can create a farm record with customer metadata and generated creden
     farmCode: string;
     qr: string;
     owner: { username: string; password: string };
-    technician: {
-      username: string;
-      name: string;
-      created: boolean;
-      password?: string;
-    };
   }>();
   assert.match(body.farmCode, /^CG-PH-/);
   assert.equal(body.qr.startsWith("coopguard://farm/open?"), true);
   assert.equal(body.owner.username, "north.owner");
-  assert.equal(body.technician.username, "north.tech");
-  assert.equal(body.technician.created, true);
   assert.equal(body.owner.password.length >= 12, true);
-  assert.equal((body.technician.password?.length ?? 0) >= 12, true);
+  assert.equal("technician" in body, false);
   const farm = await db
     .prepare(
       "SELECT name,customer_name,contact_phone,address FROM farms WHERE id=?",
@@ -268,9 +297,9 @@ test("admin can create a farm record with customer metadata and generated creden
   );
   assert.equal(
     (await db
-      .prepare("SELECT COUNT(*) n FROM users WHERE username IN (?,?)")
-      .get("north.owner", "north.tech"))!.n,
-    2,
+      .prepare("SELECT COUNT(*) n FROM users WHERE username=?")
+      .get("north.owner"))!.n,
+    1,
   );
 
   const second = await app.inject({
@@ -281,20 +310,20 @@ test("admin can create a farm record with customer metadata and generated creden
       farmName: "South Valley Poultry",
       ownerUsername: "south.owner",
       ownerName: "South Valley Owner",
-      technicianUsername: "north.tech",
-      technicianName: "Ignored technician name",
     },
   });
   assert.equal(second.statusCode, 200, second.body);
   const secondBody = second.json<typeof body>();
-  assert.equal(secondBody.technician.created, false);
-  assert.equal(secondBody.technician.username, "north.tech");
-  assert.equal(secondBody.technician.name, "North Valley Tech");
-  assert.equal("password" in secondBody.technician, false);
   assert.equal(
     (await db
       .prepare("SELECT COUNT(*) n FROM users WHERE role='technician'")
       .get())!.n,
+    0,
+  );
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?")
+      .get(secondBody.farmId))!.n,
     1,
   );
 });

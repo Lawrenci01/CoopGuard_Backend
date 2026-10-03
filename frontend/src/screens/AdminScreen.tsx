@@ -25,8 +25,6 @@ const emptyForm = (): AdminFarmInput => ({
   address: '',
   ownerUsername: '',
   ownerName: '',
-  technicianUsername: '',
-  technicianName: '',
 });
 
 function Field({
@@ -86,8 +84,6 @@ export function AdminScreen() {
     'address',
     'ownerUsername',
     'ownerName',
-    'technicianUsername',
-    'technicianName',
   ];
   const canCreate = auth.online && required.every((key) => form[key].trim()) && !busy;
 
@@ -96,10 +92,6 @@ export function AdminScreen() {
     const details = Object.fromEntries(
       Object.entries(form).map(([key, value]) => [key, value.trim()]),
     ) as AdminFarmInput;
-    if (details.ownerUsername.toLowerCase() === details.technicianUsername.toLowerCase()) {
-      setError('Choose different usernames for the owner and technician.');
-      return;
-    }
     setBusy(true);
     setError('');
     try {
@@ -126,12 +118,6 @@ export function AdminScreen() {
           `Owner: ${created.owner.name}`,
           `Username: ${created.owner.username}`,
           `Temporary password: ${created.owner.password}`,
-          '',
-          `Shared technician: ${created.technician.name}`,
-          `Username: ${created.technician.username}`,
-          ...(created.technician.password
-            ? [`Temporary password: ${created.technician.password}`]
-            : ['Use the existing shared technician account.']),
         ].join('\n'),
       });
     } catch {
@@ -141,11 +127,7 @@ export function AdminScreen() {
 
   const startAnother = () => {
     setCreated(null);
-    setForm((current) => ({
-      ...emptyForm(),
-      technicianUsername: current.technicianUsername,
-      technicianName: current.technicianName,
-    }));
+    setForm(emptyForm());
     setError('');
   };
 
@@ -231,21 +213,6 @@ export function AdminScreen() {
                 </Label>
                 <Label weight="medium">Temporary password · {created.owner.password}</Label>
               </Card>
-              <Card style={{ gap: 8 }}>
-                <Label weight="bold" style={{ color: colors.ink }}>
-                  Shared technician account
-                </Label>
-                <Label>
-                  {created.technician.name} · {created.technician.username}
-                </Label>
-                {created.technician.password ? (
-                  <Label weight="medium">Temporary password · {created.technician.password}</Label>
-                ) : (
-                  <Label style={{ color: colors.muted }}>
-                    Existing technician reused. No new password was created.
-                  </Label>
-                )}
-              </Card>
               {!!error && (
                 <Label accessibilityLiveRegion="polite" style={{ color: colors.red }}>
                   {error}
@@ -276,7 +243,8 @@ export function AdminScreen() {
                   Register a farm
                 </Label>
                 <Label style={{ color: colors.muted }}>
-                  Create the farm and owner account. The same technician account works across farms.
+                  Create the farm and its owner account. The shared technician can select it after
+                  registration.
                 </Label>
               </View>
 
@@ -330,28 +298,6 @@ export function AdminScreen() {
                 </>,
               )}
 
-              {section(
-                'Shared technician account',
-                <>
-                  <Field
-                    label="Technician full name"
-                    value={form.technicianName}
-                    onChange={(value) => update('technicianName', value)}
-                  />
-                  <Field
-                    label="Technician username"
-                    value={form.technicianUsername}
-                    onChange={(value) => update('technicianUsername', value)}
-                    autoCapitalize="none"
-                  />
-                </>,
-              )}
-
-              <Label style={{ color: colors.muted, fontSize: 12 }}>
-                Use the same technician username for every farm. It is created on the first farm and
-                reused afterward.
-              </Label>
-
               {!!error && (
                 <Label accessibilityLiveRegion="polite" style={{ color: colors.red }}>
                   {error}
@@ -368,7 +314,7 @@ export function AdminScreen() {
                 disabled={!canCreate}
                 onPress={() => void createFarm()}
               >
-                {busy ? 'Creating farm…' : 'Create farm and accounts'}
+                {busy ? 'Creating farm…' : 'Create farm and owner account'}
               </Button>
             </View>
           )}

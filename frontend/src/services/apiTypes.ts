@@ -40,13 +40,10 @@ export interface AdminFarmInput {
   address: string;
   ownerUsername: string;
   ownerName: string;
-  technicianUsername: string;
-  technicianName: string;
 }
 export interface AdminFarmResult {
   farmId: string;
   farmCode: string;
   qr: string;
   owner: { username: string; name: string; password: string };
-  technician: { username: string; name: string; created: boolean; password?: string };
 }

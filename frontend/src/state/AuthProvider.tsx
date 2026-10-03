@@ -42,6 +42,7 @@ interface AuthContextValue {
   pairHub: (value: string) => Promise<void>;
   forgetHub: () => Promise<void>;
   selectFarm: (id: string) => Promise<void>;
+  selectFarmByCode: (code: string) => Promise<void>;
   revalidate: () => Promise<void>;
   rejected: (error: unknown) => Promise<void>;
 }
@@ -393,6 +394,57 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       const next = { ...saved, farmId: id };
       await store(next);
       await validate(next);
+    },
+    selectFarmByCode: async (code) => {
+      const saved = current.current;
+      if (!saved || saved.session.account.role !== 'technician')
+        throw new Error('Only the shared technician can open any registered farm.');
+      const normalized = code.trim().toUpperCase();
+      if (!/^CG-[A-Z0-9-]{4,32}$/.test(normalized))
+        throw new Error('Enter or scan a valid Farm ID.');
+      const servers = [
+        ...new Set([server, CLOUD_SERVER, ...Object.values(hubs.current).map((hub) => hub.server)]),
+      ];
+      const results = await Promise.allSettled(
+        servers.map((endpoint) => api.me(endpoint, saved.session.token)),
+      );
+      const match = results.flatMap((result, index) => {
+        if (result.status !== 'fulfilled') return [];
+        const farm = result.value.farms.find((item) => item.code.toUpperCase() === normalized);
+        return farm ? [{ endpoint: servers[index]!, identity: result.value, farm }] : [];
+      })[0];
+      if (!match) {
+        const failure = results.find((result) => result.status === 'rejected');
+        if (
+          failure?.status === 'rejected' &&
+          results.every((result) => result.status === 'rejected')
+        )
+          throw failure.reason;
+        throw new Error('No farm was found for that Farm ID on the connected servers.');
+      }
+      const generation = ++epoch.current;
+      const next = {
+        ...saved,
+        server: match.endpoint,
+        session: { ...saved.session, ...match.identity },
+        farmId: match.farm.id,
+        verifiedAt: Date.now(),
+      };
+      await store(next);
+      if (generation !== epoch.current) return;
+      const reachable = new Set(
+        results.flatMap((result, index) =>
+          result.status === 'fulfilled' ? [servers[index]!] : [],
+        ),
+      );
+      setServer(match.endpoint);
+      setCloudOnline(reachable.has(CLOUD_SERVER));
+      setHubOnline(
+        servers.some((endpoint) => endpoint !== CLOUD_SERVER && reachable.has(endpoint)),
+      );
+      setActiveConnection(match.endpoint === CLOUD_SERVER ? 'cloud' : 'hub');
+      setOnline(true);
+      setError(null);
     },
     revalidate: async () => {
       if (current.current) await validate(current.current);

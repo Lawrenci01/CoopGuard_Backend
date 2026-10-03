@@ -1,6 +1,6 @@
 # Accounts and role-specific screens
 
-Updated: 2026-10-02. Implemented in 0.5.0: real username/password accounts shared through Render/Turso, role-specific Android screens, automatic paired-hub/cloud selection, and the technician survey-to-activation workflow. Physical hub commissioning and field verification remain separate integration work.
+Updated: 2026-10-03. Real username/password accounts are shared through Render/Turso, with role-specific Android screens, automatic paired-hub/cloud selection, and the technician survey-to-activation workflow. Physical hub commissioning and field verification remain separate integration work.
 
 ## Authority
 
@@ -8,7 +8,7 @@ Updated: 2026-10-02. Implemented in 0.5.0: real username/password accounts share
 | ---------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Owner      | CoopGuard development team via server operator CLI | Manages its farm, flock cycles, and workers; views but does not alter technician survey details |
 | Worker     | Its farm owner                                     | Daily checks, alert acknowledgment, own inspection notes, permitted sample ventilation increase |
-| Technician | Created once by the team; shared across farms      | Setup, devices, calibration and diagnostics on any registered farm                              |
+| Technician | Created once by the team; shared across farms      | Installation setup, calibration and diagnostics for a farm selected by Farm ID or QR             |
 
 There is no public signup or role selector. Admins create a separate owner account for each farm; the owner can only access that farm, including when using the cloud. The single technician account can select any farm by Farm ID or QR. The QR identifies a farm but is not an authorization credential. The API enforces role and farm access independently of the interface. Flock-cycle changes are owner-only; worker flock management is not enabled.
 
@@ -20,7 +20,7 @@ There is no public signup or role selector. Admins create a separate owner accou
 | Worker     | Daily checks, Alerts, House map, Notes           |
 | Technician | Farm selector, installation-only setup workspace |
 
-Each Overview retains important alerts before setup prompts. When a farm has no survey, the owner sees that a technician visit is required; the technician sees **Start site survey**. The technician alone records the survey, approves its generated plan, completes installation and commissioning checklists, runs the monitoring trial and activates monitor-only or eligible full-control operation. The owner sees the resulting house profile and status without edit controls. The shared Account area offers sync status, password change and sign-out. Only owners see worker management. Sensor readings/equipment feedback remain clearly marked samples.
+Owner and worker Overview screens retain important alerts before setup prompts. When a farm has no survey, the owner sees that a technician visit is required. The technician first enters or scans the Farm ID, then sees **Start site survey** inside the installation-only workspace. The technician alone records the survey, approves its generated plan, completes installation and commissioning checklists, runs the monitoring trial and activates monitor-only or eligible full-control operation. The technician does not receive the operational Overview, Alerts, House map, Trends or sample sensor directory. The owner sees the resulting house profile and status without edit controls. The shared Account area offers sync status, password change and sign-out. Only owners see worker management. Sensor readings/equipment feedback remain clearly marked samples.
 
 ## Credentials and session behavior
 

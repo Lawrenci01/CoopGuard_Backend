@@ -414,7 +414,10 @@ export function surveyMissing(s: SiteSurvey): string[] {
   if (s.sensors.plannedNodes < 1) missing.push('Planned node count');
   if (!clean(s.sensors.placementNotes)) missing.push('Node locations, heights and power sources');
   if (!clean(s.operations.dayResponder)) missing.push('Primary alert responder');
-  if (!clean(s.operations.powerFailureProcedure) || s.operations.powerFailureProcedure === 'no_plan')
+  if (
+    !clean(s.operations.powerFailureProcedure) ||
+    s.operations.powerFailureProcedure === 'no_plan'
+  )
     missing.push('Power-loss response');
   if (!s.decision.ownerAcknowledged) missing.push('Owner acknowledgement');
   if (!s.decision.technicianConfirmed) missing.push('Technician confirmation');
@@ -504,7 +507,8 @@ export function houseCapabilities(
   plan = buildInstallationPlan(survey),
 ): HouseCapabilities {
   const equipment = plan.equipment.map(
-    (item) => `${equipmentKinds.find((kind) => kind.key === item.kind)?.label ?? item.kind} (${item.count})`,
+    (item) =>
+      `${equipmentKinds.find((kind) => kind.key === item.kind)?.label ?? item.kind} (${item.count})`,
   );
   const readingMetrics = plan.metrics.filter((metric) => metric !== 'Sound collection');
   const app = [
@@ -521,7 +525,9 @@ export function houseCapabilities(
 
   const hardware = [
     `${plan.nodeCount || 0} sensing node${plan.nodeCount === 1 ? '' : 's'} across ${plan.sections} house section${plan.sections === 1 ? '' : 's'}`,
-    plan.metrics.length ? `Collect ${plan.metrics.join(', ')}` : 'Sensor selection is still required',
+    plan.metrics.length
+      ? `Collect ${plan.metrics.join(', ')}`
+      : 'Sensor selection is still required',
   ];
   if (equipment.length) hardware.push(`Interface plan for ${equipment.join(', ')}`);
 

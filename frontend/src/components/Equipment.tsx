@@ -22,9 +22,7 @@ export function Equipment() {
         `${equipmentKinds.find((kind) => kind.key === item.kind)?.label ?? item.kind} (${item.count})`,
     )
     .join(' · ');
-  const controllableFan = equipment.some(
-    (item) => item.kind === 'fan' && item.controlRequested,
-  );
+  const controllableFan = equipment.some((item) => item.kind === 'fan' && item.controlRequested);
   const stage = !data.site.survey
     ? 'Survey required'
     : !commissioned

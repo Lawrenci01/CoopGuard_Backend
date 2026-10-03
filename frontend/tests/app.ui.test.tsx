@@ -26,7 +26,8 @@ jest.mock('../src/services/api', () => {
 let farm = seedLocalFarm(),
   revision = 0,
   offline = false,
-  workers: WorkerAccount[] = [];
+  workers: WorkerAccount[] = [],
+  discoveredFarms: Session['farms'] = [];
 const sessions = new Map<string, Session>();
 const keys = new Set<string>();
 const sessionFor = (role: Role, forced = false): Session => ({
@@ -47,7 +48,7 @@ async function openTechnicianFarm() {
   await screen.findByText('Select the farm for this visit');
   await fireEvent.changeText(screen.getByLabelText('Farm ID'), 'CG-PH-TEST01');
   await fireEvent.press(screen.getByTestId('open-technician-farm'));
-  await screen.findByTestId('screen-Dashboard');
+  await screen.findByTestId('technician-setup-workspace');
 }
 async function prepareActivatedFarm() {
   let stored = JSON.stringify(farm);
@@ -72,6 +73,7 @@ beforeEach(async () => {
   revision = 0;
   offline = false;
   workers = [];
+  discoveredFarms = [];
   sessions.clear();
   keys.clear();
   jest.mocked(api.login).mockImplementation(async (_s, username) => {
@@ -98,7 +100,7 @@ beforeEach(async () => {
     online();
     const s = sessions.get(token);
     if (!s) throw new ApiError(401, 'Session ended.');
-    return s;
+    return { ...s, farms: [...s.farms, ...discoveredFarms] };
   });
   jest.mocked(api.password).mockImplementation(async (_s, token) => {
     online();
@@ -150,12 +152,6 @@ beforeEach(async () => {
     farmCode: 'CG-PH-ABCD1234',
     qr: 'coopguard://farm/open?version=1&farm=CG-PH-ABCD1234',
     owner: { username: 'north.owner', name: 'North Owner', password: 'Temp-owner-pass-123' },
-    technician: {
-      username: 'north.tech',
-      name: 'North Technician',
-      created: true,
-      password: 'Temp-technician-pass-123',
-    },
   });
   jest.mocked(apiRequest).mockImplementation(async (_s, _p, _token, body) => {
     online();
@@ -182,23 +178,12 @@ describe('authenticated native mobile flows', () => {
       farmCode: 'CG-PH-ABCD1234',
       qr: 'coopguard://farm/open?version=1&farm=CG-PH-ABCD1234',
       owner: { username: 'north.owner', name: 'North Owner', password: 'Temp-owner-pass-123' },
-      technician: {
-        username: 'north.tech',
-        name: 'North Technician',
-        created: true,
-        password: 'Temp-technician-pass-123',
-      },
     });
     jest.mocked(api.adminCreateFarm).mockResolvedValueOnce({
       farmId: 'south-farm-record',
       farmCode: 'CG-PH-SOUTH123',
       qr: 'coopguard://farm/open?version=1&farm=CG-PH-SOUTH123',
       owner: { username: 'south.owner', name: 'South Owner', password: 'Temp-owner-pass-456' },
-      technician: {
-        username: 'north.tech',
-        name: 'North Technician',
-        created: false,
-      },
     });
     await render(<App />);
     await signIn('team.admin');
@@ -214,8 +199,6 @@ describe('authenticated native mobile flows', () => {
       'Farm address': '12 River Lane, Bayview',
       'Owner full name': 'North Owner',
       'Owner username': 'north.owner',
-      'Technician full name': 'North Technician',
-      'Technician username': 'north.tech',
     };
     for (const [label, value] of Object.entries(fields))
       await fireEvent.changeText(screen.getByLabelText(label), value);
@@ -224,7 +207,7 @@ describe('authenticated native mobile flows', () => {
     await screen.findByTestId('admin-farm-created');
     expect(screen.getByText('CG-PH-ABCD1234')).toBeTruthy();
     expect(screen.getByText(/Temp-owner-pass-123/)).toBeTruthy();
-    expect(screen.getByText(/Temp-technician-pass-123/)).toBeTruthy();
+    expect(screen.queryByText(/Temp-technician-pass-123/)).toBeNull();
     expect(api.adminCreateFarm).toHaveBeenCalledWith(expect.any(String), 'a'.repeat(43), {
       farmName: 'North Valley Poultry',
       customerName: 'North Valley Coop',
@@ -233,13 +216,10 @@ describe('authenticated native mobile flows', () => {
       address: '12 River Lane, Bayview',
       ownerName: 'North Owner',
       ownerUsername: 'north.owner',
-      technicianName: 'North Technician',
-      technicianUsername: 'north.tech',
     });
 
     await fireEvent.press(screen.getByText('Create another farm'));
-    expect(screen.getByLabelText('Technician username').props.value).toBe('north.tech');
-    expect(screen.getByLabelText('Technician full name').props.value).toBe('North Technician');
+    expect(screen.queryByLabelText('Technician username')).toBeNull();
     for (const [label, value] of Object.entries({
       'Farm name': 'South Valley Poultry',
       'Customer name': 'South Valley Coop',
@@ -251,9 +231,39 @@ describe('authenticated native mobile flows', () => {
     }))
       await fireEvent.changeText(screen.getByLabelText(label), value);
     await fireEvent.press(screen.getByTestId('admin-create-farm'));
-    await screen.findByText('Existing technician reused. No new password was created.');
-    expect(screen.queryByText(/Temp-technician-pass-123/)).toBeNull();
+    await screen.findByText('CG-PH-SOUTH123');
     expect(api.adminCreateFarm).toHaveBeenCalledTimes(2);
+  });
+
+  test('technician scanning a new farm QR refreshes farms before opening it', async () => {
+    discoveredFarms = [{ id: 'new-farm-id', name: 'New customer farm', code: 'CG-PH-NEW123' }];
+    await render(<App />);
+    await signIn('technician');
+    await screen.findByText('Select the farm for this visit');
+    await fireEvent.press(screen.getByText('Scan Farm QR'));
+    await fireEvent(screen.getByTestId('technician-farm-qr-camera'), 'onBarcodeScanned', {
+      data: 'coopguard://farm/open?version=1&farm=CG-PH-NEW123',
+    });
+
+    await screen.findByTestId('technician-setup-workspace');
+    expect(api.me).toHaveBeenCalledWith(expect.any(String), 't'.repeat(43));
+    const saved = JSON.parse((await SecureStore.getItemAsync('coopguard.auth.v1'))!);
+    expect(saved.farmId).toBe('new-farm-id');
+    expect(saved.session.farms).toContainEqual(discoveredFarms[0]);
+  });
+
+  test('technician entering a new Farm ID refreshes farms before opening it', async () => {
+    discoveredFarms = [{ id: 'new-farm-id', name: 'New customer farm', code: 'CG-PH-NEW123' }];
+    await render(<App />);
+    await signIn('technician');
+    await screen.findByText('Select the farm for this visit');
+    await fireEvent.changeText(screen.getByLabelText('Farm ID'), 'CG-PH-NEW123');
+    await fireEvent.press(screen.getByTestId('open-technician-farm'));
+
+    await screen.findByTestId('technician-setup-workspace');
+    const saved = JSON.parse((await SecureStore.getItemAsync('coopguard.auth.v1'))!);
+    expect(saved.farmId).toBe('new-farm-id');
+    expect(api.me).toHaveBeenCalledWith(expect.any(String), 't'.repeat(43));
   });
 
   test('failed login stays private; first sign-in requires a new password', async () => {
@@ -316,7 +326,7 @@ describe('authenticated native mobile flows', () => {
     expect(screen.queryByTestId('role-technician')).toBeNull();
     expect(screen.getByLabelText('Temporary password').props.value).toBe('');
   });
-  test('technician selects a farm then sees its operational tabs without unrelated demo nodes', async () => {
+  test('technician selects a farm then sees setup tools without operational farm screens', async () => {
     await render(<App />);
     await signIn('technician');
     await screen.findByText('Select the farm for this visit');
@@ -324,19 +334,17 @@ describe('authenticated native mobile flows', () => {
     expect(screen.queryByText('House readings')).toBeNull();
     expect(screen.queryByTestId('nav-Alerts')).toBeNull();
     await openTechnicianFarm();
-    expect(screen.getByTestId('nav-Dashboard')).toBeTruthy();
-    expect(screen.getByTestId('nav-Alerts')).toBeTruthy();
-    expect(screen.getByTestId('nav-Heat-Map')).toBeTruthy();
-    expect(screen.getByTestId('nav-Analytics')).toBeTruthy();
-    expect(screen.getByTestId('nav-Devices')).toBeTruthy();
+    expect(screen.getByTestId('technician-setup-workspace')).toBeTruthy();
+    expect(screen.queryByTestId('nav-Dashboard')).toBeNull();
+    expect(screen.queryByTestId('nav-Alerts')).toBeNull();
+    expect(screen.queryByTestId('nav-Heat-Map')).toBeNull();
+    expect(screen.queryByTestId('nav-Analytics')).toBeNull();
+    expect(screen.queryByTestId('nav-Devices')).toBeNull();
     expect(screen.queryByText('Section B is getting warm')).toBeNull();
-    expect(screen.getByText('House readings')).toBeTruthy();
-    await fireEvent.press(screen.getByTestId('nav-Heat-Map'));
+    expect(screen.queryByText('House readings')).toBeNull();
     expect(screen.queryByTestId('map-sensor-01')).toBeNull();
-    await fireEvent.press(screen.getByTestId('nav-Devices'));
-    await fireEvent.press(screen.getByTestId('site-survey'));
     expect(screen.getByText('Start site survey')).toBeTruthy();
-    await fireEvent.press(screen.getByTestId('account-menu'));
+    await fireEvent.press(screen.getByText('Account'));
     await fireEvent.press(screen.getByTestId('sign-out'));
     await screen.findByLabelText('Username');
     expect(screen.queryByTestId('nav-Devices')).toBeNull();
@@ -346,7 +354,7 @@ describe('authenticated native mobile flows', () => {
     await render(<App />);
     await signIn('technician');
     await openTechnicianFarm();
-    await fireEvent.press(screen.getByTestId('account-menu'));
+    await fireEvent.press(screen.getByText('Account'));
     await fireEvent.press(screen.getByTestId('hub-setup'));
     await fireEvent.changeText(
       screen.getByLabelText('Farm hub HTTPS address'),
@@ -375,8 +383,6 @@ describe('authenticated native mobile flows', () => {
     await render(<App />);
     await signIn('technician');
     await openTechnicianFarm();
-    await fireEvent.press(screen.getByTestId('nav-Devices'));
-    await fireEvent.press(screen.getByText('Site survey'));
     expect(await screen.findByText('Full-control candidate')).toBeTruthy();
     await fireEvent.press(screen.getByTestId('approve-plan'));
     await fireEvent.press(await screen.findByTestId('start-installation'));
@@ -388,8 +394,6 @@ describe('authenticated native mobile flows', () => {
     await render(<App />);
     await signIn('technician');
     await openTechnicianFarm();
-    await fireEvent.press(screen.getByTestId('nav-Devices'));
-    await fireEvent.press(screen.getByTestId('site-survey'));
     await fireEvent.press(screen.getByTestId('settings-software'));
     await screen.findByText('Simulated device firmware');
     await fireEvent.press(screen.getAllByText('Simulate firmware update')[1]!);
@@ -426,8 +430,8 @@ describe('authenticated native mobile flows', () => {
     await fireEvent.press(screen.getByLabelText('Technician confirms the survey is accurate'));
     await fireEvent.press(screen.getByText('Complete survey'));
     await waitFor(() => expect(farm.site.survey?.farm.houseName).toBe('Main house'));
-    expect(screen.getByTestId('house-attention')).toBeTruthy();
-    expect(screen.getByText('House readings')).toBeTruthy();
+    expect(screen.queryByTestId('house-attention')).toBeNull();
+    expect(screen.queryByText('House readings')).toBeNull();
     expect(screen.queryByText('Section B is getting warm')).toBeNull();
     expect(farm.context.controlMode).toBe('monitor');
     await app.unmount();

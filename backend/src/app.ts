@@ -270,7 +270,7 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.6.1",
+    version: "0.6.3",
     readings: "sample",
     mode: options.deploymentMode ?? "standalone",
     ...(options.deploymentMode === "hub" && options.hubId
@@ -378,16 +378,11 @@ export async function createApp(
           address: z.string().trim().min(1).max(200).optional(),
           ownerUsername: username,
           ownerName: name,
-          technicianUsername: username,
-          technicianName: name,
         })
         .strict(),
       request.body,
     );
-    const ownerUsername = body.ownerUsername,
-      technicianUsername = body.technicianUsername;
-    if (ownerUsername === technicianUsername)
-      fail(400, "Use separate usernames for the owner and technician.");
+    const ownerUsername = body.ownerUsername;
     if (
       await db
         .prepare("SELECT 1 FROM users WHERE username=?")
@@ -397,33 +392,7 @@ export async function createApp(
         409,
         "This owner username is unavailable. Choose a unique account name.",
       );
-    const activeTechnicians = (await db
-      .prepare(
-        "SELECT id,username,name FROM users WHERE role='technician' AND active=1 ORDER BY created_at",
-      )
-      .all()) as { id: string; username: string; name: string }[];
-    if (activeTechnicians.length > 1)
-      fail(
-        409,
-        "Multiple active technician accounts exist. Consolidate them before creating another farm.",
-      );
-    const sharedTechnician = activeTechnicians[0];
-    if (sharedTechnician && sharedTechnician.username !== technicianUsername)
-      fail(
-        409,
-        `Use the shared technician account ${sharedTechnician.username}.`,
-      );
-    if (
-      !sharedTechnician &&
-      (await db
-        .prepare("SELECT 1 FROM users WHERE username=?")
-        .get(technicianUsername))
-    )
-      fail(409, "This username is already used by a non-technician account.");
     const ownerPassword = temporaryPassword();
-    const technicianPassword = sharedTechnician
-      ? undefined
-      : temporaryPassword();
     const farmId = await createFarm(db, body.farmName, now(), {
       customerName: body.customerName,
       contactName: body.contactName,
@@ -435,9 +404,6 @@ export async function createApp(
       .get(farmId)) as { code: string } | undefined;
     if (!farmCode) fail(500, "Farm code generation failed.");
     const ownerHash = await hashPassword(ownerPassword);
-    const technicianHash = technicianPassword
-      ? await hashPassword(technicianPassword)
-      : undefined;
     const ownerUserId = randomUUID();
     await db.batch([
       {
@@ -448,20 +414,6 @@ export async function createApp(
         sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
         args: [ownerUserId, farmId],
       },
-      ...(sharedTechnician
-        ? []
-        : [
-            {
-              sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'technician',?,?)",
-              args: [
-                randomUUID(),
-                technicianUsername,
-                body.technicianName,
-                technicianHash!,
-                now(),
-              ],
-            },
-          ]),
       auditStatement(user, farmId, "farm_created", farmId),
     ]);
     return {
@@ -472,12 +424,6 @@ export async function createApp(
         username: ownerUsername,
         name: body.ownerName,
         password: ownerPassword,
-      },
-      technician: {
-        username: sharedTechnician?.username ?? technicianUsername,
-        name: sharedTechnician?.name ?? body.technicianName,
-        created: !sharedTechnician,
-        ...(technicianPassword ? { password: technicianPassword } : {}),
       },
     };
   });

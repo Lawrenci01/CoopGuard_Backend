@@ -13,6 +13,7 @@ const { values } = parseArgs({
     farm: { type: "string" },
     owner: { type: "string" },
     technician: { type: "string" },
+    admin: { type: "string" },
     output: { type: "string" },
     "reset-user": { type: "string" },
   },
@@ -37,7 +38,7 @@ if (values["reset-user"]) {
     hash = await hashPassword(password);
   await db.batch([
     {
-      sql: "UPDATE users SET password_hash=?,must_change=1 WHERE id=?",
+      sql: "UPDATE users SET password_hash=?,active=1,must_change=1 WHERE id=?",
       args: [hash, user.id as string],
     },
     {
@@ -46,6 +47,17 @@ if (values["reset-user"]) {
     },
   ]);
   credentials.push(`Username: ${username}\nTemporary password: ${password}`);
+} else if (values.admin) {
+  const username = usernameSchema.parse(values.admin);
+  if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
+    throw new Error("Admin username already exists. Use --reset-user to replace its password.");
+  const password = temporaryPassword();
+  await db
+    .prepare(
+      "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'admin',?,?)",
+    )
+    .run(randomUUID(), username, "Team admin", await hashPassword(password), Date.now());
+  credentials.push(`Role: admin\nUsername: ${username}\nTemporary password: ${password}`);
 } else {
   if (
     !values.farm?.trim() ||

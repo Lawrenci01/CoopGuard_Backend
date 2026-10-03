@@ -19,12 +19,19 @@ cd C:\Vault\Projects\CG\backend
 $env:TURSO_DATABASE_URL="libsql://your-database-your-account.turso.io"
 $env:TURSO_AUTH_TOKEN="paste-your-private-database-token"
 npm ci
+npm run provision -- --admin team.admin --output .local/render-admin-account.txt
 npm run provision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --output .local/render-initial-accounts.txt
 Remove-Item Env:TURSO_DATABASE_URL
 Remove-Item Env:TURSO_AUTH_TOKEN
 ```
 
-Save the generated temporary credentials securely, sign in and change both passwords. Delete the private output file after the credentials have been transferred.
+Save the generated temporary credentials securely, sign in and change every temporary password. Delete the private output files after the credentials have been transferred. The backend never creates an administrator with a fixed password.
+
+If an earlier development build created `team.admin` with the retired fixed password, the current backend disables that account and revokes its sessions during startup. Reactivate it with a new random temporary password:
+
+```powershell
+npm run provision -- --reset-user team.admin --output .local/render-admin-reset.txt
+```
 
 To replace every account assigned to an existing pilot farm while preserving its survey and farm records, run the private prompt helper:
 
@@ -102,11 +109,12 @@ Requires Node.js 24 (tested on 24.13.0; its built-in `node:sqlite` emits an expe
 cd backend
 npm ci
 npm run tls
+npm run provision -- --admin team.admin --output .local/admin-account.txt
 npm run provision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --output .local/initial-accounts.txt
 npm start
 ```
 
-The CLI provisions the farm, its owner and its assigned technician. It generates unique temporary passwords into the named private file and requires a new file path each run. Protect `.local/` with account-specific OS permissions; on this PC it is restricted to Lawrence, SYSTEM and administrators. Never commit or distribute private keys, the database or credentials. Only `.local/tls/ca.crt`, the **public** CA certificate, goes into internal Android builds.
+The CLI provisions the private team administrator separately, then provisions the farm, its owner and the shared technician. It generates unique temporary passwords into the named private files and requires a new file path each run. Protect `.local/` with account-specific OS permissions; on this PC it is restricted to Lawrence, SYSTEM and administrators. Never commit or distribute private keys, the database or credentials. Only `.local/tls/ca.crt`, the **public** CA certificate, goes into internal Android builds.
 
 `npm run tls` creates a private CA once and renews the server certificate with localhost and current IPv4 addresses. It retains the CA; deleting/replacing it breaks trust in installed builds. Server certificates last one year; renew before expiry or after an IP change and restart the server. Android checks both trust and hostnames. The tunnel validates this private origin CA and provides a publicly trusted certificate to phones.
 
@@ -114,7 +122,7 @@ Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_H
 
 ## Account management
 
-- No public signup. A team admin can use the admin-only mobile workspace to register a customer and farm, create its owner account, and receive the generated Farm ID, QR and temporary credentials. The single shared technician account is created on the first farm and reused for later farms. The API rejects farm creation from all other roles. The CLI remains available for private operator provisioning and account recovery.
+- No public signup. A team admin can use the admin-only mobile workspace to register a customer and farm, create its owner account, and receive the generated Farm ID, QR and temporary credentials. The shared technician and team admin are created only through the private operator CLI. The API rejects farm creation from all other roles.
 - Team admins have no farm membership and use a separate administration workspace. Owners and workers are limited to farms with explicit membership; an owner created by the admin flow has exactly one farm.
 - The one active technician account can access every registered farm. Farm IDs or QRs select a farm; they do not authenticate users. Technician authorization is based on the signed-in role rather than a membership row.
 - Owners create **workers only** within their own farm, and can rename, disable/enable or reset them. They cannot create/edit owners or technicians.
@@ -148,7 +156,7 @@ Local SQLite uses WAL, foreign keys and serialized farm mutations. Turso writes 
 | `GET /health`                                               | Non-sensitive service/version check                        |
 | `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/me` | Session lifecycle                                          |
 | `POST /v1/auth/password`                                    | Current-password-verified change and session rotation      |
-| `POST /v1/admin/farms`                                      | Admin-only farm/customer and owner/technician provisioning |
+| `POST /v1/admin/farms`                                      | Admin-only farm/customer and owner provisioning            |
 | `GET /v1/farms/:farmId`                                     | Authorized farm snapshot and revision                      |
 | `POST /v1/farms/:farmId/actions`                            | Validated, authorized record mutation                      |
 | `POST /v1/farms/:farmId/import`                             | Technician's one-time legacy phone import                  |

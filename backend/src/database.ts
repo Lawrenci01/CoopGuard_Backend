@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { hashPassword } from "./passwords";
+import { verifyPassword } from "./passwords";
 import { seedLocalFarm } from "./shared/services/localFarmRepository";
 
 export type SqlArgument = string | number | bigint | Uint8Array | null;
@@ -217,34 +217,18 @@ async function migrateLegacyUsersTable(db: CoopDatabase) {
   }
 }
 
-export async function ensureDefaultAdmin(db: CoopDatabase) {
-  const username = "team.admin";
-  const existing = await db
-    .prepare("SELECT id, role, password_hash FROM users WHERE username=?")
-    .get(username);
-  if (existing) {
-    if (existing.role !== "admin") {
-      await db
-        .prepare("UPDATE users SET role='admin', name='Team Admin', must_change=0 WHERE username=?")
-        .run(username);
-    }
-    return;
-  }
-  const id = randomUUID();
-  await db
-    .prepare(
-      "INSERT INTO users(id,username,name,role,password_hash,active,must_change,created_at) VALUES(?,?,?,?,?,?,?,?)",
-    )
-    .run(
-      id,
-      username,
-      "Team Admin",
-      "admin",
-      await hashPassword("password.admin123"),
-      1,
-      0,
-      Date.now(),
-    );
+async function disableLegacyDefaultAdmin(db: CoopDatabase) {
+  const user = await db
+    .prepare("SELECT id,password_hash FROM users WHERE username=? AND role='admin'")
+    .get("team.admin");
+  if (!user || !(await verifyPassword("password.admin123", String(user.password_hash)))) return;
+  await db.batch([
+    {
+      sql: "UPDATE users SET active=0,must_change=1 WHERE id=?",
+      args: [user.id as string],
+    },
+    { sql: "DELETE FROM sessions WHERE user_id=?", args: [user.id as string] },
+  ]);
 }
 
 export async function openDatabase(
@@ -301,7 +285,7 @@ export async function openDatabase(
   } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
   await migrateLegacyUsersTable(database);
-  await ensureDefaultAdmin(database);
+  await disableLegacyDefaultAdmin(database);
   const farmColumns = new Set(
     (await database.prepare("PRAGMA table_info(farms)").all()).map((row) => String(row.name)),
   );

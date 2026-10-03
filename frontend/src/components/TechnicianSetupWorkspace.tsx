@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HouseSetupForm } from './HouseSetupForm';
 import { SiteWorkflowPanel } from './SiteWorkflowPanel';
 import { AccountSheet } from './AccountSheet';
+import { Maintenance } from './FarmManagement';
 import { Button, Chip, Label } from './ui';
 import { useAuth } from '../state/AuthProvider';
 import { useFarm } from '../state/FarmProvider';
@@ -17,6 +18,9 @@ export function TechnicianSetupWorkspace() {
   const [editingSurvey, setEditingSurvey] = useState(false);
   const [account, setAccount] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [maintenance, setMaintenance] = useState<'calibration' | 'software' | 'diagnostics' | null>(
+    null,
+  );
   const target = auth.record!.session.farms.find((item) => item.id === auth.record!.farmId)!;
 
   return (
@@ -75,10 +79,45 @@ export function TechnicianSetupWorkspace() {
             and the house map remain hidden from the technician setup flow.
           </Label>
 
-          {editingSurvey ? (
+          {maintenance ? (
+            <>
+              <Button compact variant="ghost" onPress={() => setMaintenance(null)}>
+                ← Back to installation
+              </Button>
+              <Maintenance mode={maintenance} />
+            </>
+          ) : editingSurvey ? (
             <HouseSetupForm onDone={() => setEditingSurvey(false)} />
           ) : (
-            <SiteWorkflowPanel onEdit={() => setEditingSurvey(true)} />
+            <>
+              <SiteWorkflowPanel onEdit={() => setEditingSurvey(true)} />
+              <Label weight="bold" style={{ fontSize: 18 }}>
+                Technician tools
+              </Label>
+              <View style={{ gap: 10 }}>
+                <Button
+                  testID="settings-calibration"
+                  variant="secondary"
+                  onPress={() => setMaintenance('calibration')}
+                >
+                  Sensor calibration
+                </Button>
+                <Button
+                  testID="settings-software"
+                  variant="secondary"
+                  onPress={() => setMaintenance('software')}
+                >
+                  Device software
+                </Button>
+                <Button
+                  testID="settings-diagnostics"
+                  variant="secondary"
+                  onPress={() => setMaintenance('diagnostics')}
+                >
+                  Hub and diagnostics
+                </Button>
+              </View>
+            </>
           )}
         </View>
       </ScrollView>
@@ -87,9 +126,23 @@ export function TechnicianSetupWorkspace() {
         <View
           pointerEvents="none"
           accessibilityLiveRegion="polite"
-          style={{ position: 'absolute', bottom: insets.bottom + 18, left: 18, right: 18, alignItems: 'center' }}
+          style={{
+            position: 'absolute',
+            bottom: insets.bottom + 18,
+            left: 18,
+            right: 18,
+            alignItems: 'center',
+          }}
         >
-          <View style={{ backgroundColor: colors.greenDark, paddingHorizontal: 20, paddingVertical: 14, borderRadius: 13, maxWidth: 520 }}>
+          <View
+            style={{
+              backgroundColor: colors.greenDark,
+              paddingHorizontal: 20,
+              paddingVertical: 14,
+              borderRadius: 13,
+              maxWidth: 520,
+            }}
+          >
             <Label style={{ color: '#fff', fontSize: 13 }}>{farm.toast}</Label>
           </View>
         </View>

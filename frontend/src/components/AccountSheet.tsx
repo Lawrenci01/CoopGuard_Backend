@@ -24,11 +24,7 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
     [error, setError] = useState('');
   const r = auth.record!;
   const openFarm = async (code: string) => {
-    const target = r.session.farms.find(
-      (assignedFarm) => assignedFarm.code.toUpperCase() === code.trim().toUpperCase(),
-    );
-    if (!target) throw new Error('No farm was found for that Farm ID.');
-    await auth.selectFarm(target.id);
+    await auth.selectFarmByCode(code);
     setFarmCode('');
   };
   return (

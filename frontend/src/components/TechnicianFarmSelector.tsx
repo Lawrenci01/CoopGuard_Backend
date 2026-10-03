@@ -20,13 +20,10 @@ export function TechnicianFarmSelector({ onSelected }: { onSelected: () => void 
   const record = auth.record!;
 
   const openFarm = async (code: string) => {
-    const normalized = code.trim().toUpperCase();
-    const target = record.session.farms.find((farm) => farm.code === normalized);
-    if (!target) throw new Error('No farm was found for that Farm ID.');
     setBusy(true);
     setError('');
     try {
-      await auth.selectFarm(target.id);
+      await auth.selectFarmByCode(code);
       onSelected();
     } finally {
       setBusy(false);
@@ -58,7 +55,7 @@ export function TechnicianFarmSelector({ onSelected }: { onSelected: () => void 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <ShieldCheck size={22} color={colors.green} />
             <Label weight="bold" style={{ flex: 1 }}>
-              All registered farms
+              Open a farm setup
             </Label>
           </View>
           <AuthField label="Farm ID" value={farmCode} onChange={setFarmCode} />
@@ -79,33 +76,10 @@ export function TechnicianFarmSelector({ onSelected }: { onSelected: () => void 
             Scan Farm QR
           </Button>
           <Label style={{ color: colors.muted, fontSize: 12 }}>
-            The technician account can open any registered farm. The Farm ID only selects which farm
-            to open.
+            Entering or scanning the Farm ID selects the farm for this visit. Farm readings are not
+            loaded on this screen.
           </Label>
         </Card>
-
-        <View style={{ gap: 10 }}>
-          <Label weight="bold">Registered farms</Label>
-          {record.session.farms.map((farm) => (
-            <Card key={farm.id} style={{ gap: 8, padding: 16 }}>
-              <Label weight="bold">{farm.name}</Label>
-              <Label style={{ color: colors.muted }}>Farm ID {farm.code}</Label>
-              <Button
-                compact
-                variant="secondary"
-                onPress={async () => {
-                  try {
-                    await openFarm(farm.code);
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : 'Could not open this farm.');
-                  }
-                }}
-              >
-                Open this farm setup
-              </Button>
-            </Card>
-          ))}
-        </View>
 
         {scanning && (
           <Card style={{ gap: 12 }}>
@@ -114,6 +88,7 @@ export function TechnicianFarmSelector({ onSelected }: { onSelected: () => void 
             ) : (
               <View style={{ height: 360, overflow: 'hidden', borderRadius: 18 }}>
                 <CameraView
+                  testID="technician-farm-qr-camera"
                   style={{ flex: 1 }}
                   barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                   onBarcodeScanned={
@@ -139,8 +114,7 @@ export function TechnicianFarmSelector({ onSelected }: { onSelected: () => void 
 
         {!!error && <Label style={{ color: colors.red }}>{error}</Label>}
         <Label style={{ color: colors.muted }}>
-          Signed in as {record.session.account.name}. {record.session.farms.length} registered
-          farm(s) available.
+          Signed in as {record.session.account.name}. Enter the Farm ID supplied for the visit.
         </Label>
         <Button variant="ghost" onPress={() => void auth.logout()}>
           Sign out

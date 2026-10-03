@@ -37,6 +37,7 @@ import { DevicesScreen } from './src/screens/DevicesScreen';
 import { NotesScreen } from './src/screens/NotesScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { TechnicianFarmSelector } from './src/components/TechnicianFarmSelector';
+import { TechnicianSetupWorkspace } from './src/components/TechnicianSetupWorkspace';
 import { AdminScreen } from './src/screens/AdminScreen';
 
 const Tabs = createBottomTabNavigator<Record<TabName, undefined>>();
@@ -360,7 +361,7 @@ function TechnicianSession() {
   if (!selected) return <TechnicianFarmSelector onSelected={() => setSelected(true)} />;
   return (
     <FarmProvider key={`${auth.server}:${r.session.account.id}:${r.farmId}:technician`}>
-      <FarmApp />
+      <TechnicianSetupWorkspace />
     </FarmProvider>
   );
 }

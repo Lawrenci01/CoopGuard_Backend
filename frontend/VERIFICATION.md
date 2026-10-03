@@ -1,5 +1,16 @@
 # Android verification
 
+## Version 0.6.4 — 2026-10-03
+
+**Complete sensing nodes and the technician setup boundary are enforced in the current source.**
+
+- Every virtual sensing node carries temperature, humidity, ammonia, carbon dioxide and litter-moisture readings. Pairing selects only the farm and house section; equipment-control hardware remains separate.
+- A technician must enter or scan the Farm ID for the current visit. The selector does not show a farm directory or load farm readings, and the selected farm opens an installation-only workspace.
+- Operational Overview, Alerts, House map, Trends and the sample sensor directory remain hidden from technicians. Calibration, simulated software maintenance and hub diagnostics are available within setup.
+- Frontend TypeScript passes, all 39 domain tests pass, all 12 native interaction tests pass, and the complete frontend tree passes Prettier.
+- Release build succeeded: package `com.coopguard.app`, version 0.6.4, version code 14, minimum API 24 and target API 36. APK signature verifies with v2. Artifact: `dist/android/CoopGuard-0.6.4.apk`, 59,106,654 bytes. SHA-256: `3F25D8B29E1641D5601C1456C20B0CD4D1EE2667F8618AADAA3A2E39C7A8E62A`.
+- The APK was copied to the connected phone as `Download/CoopGuard-0.6.4.apk`; the phone copy has the same SHA-256. Manual installation remains required.
+
 ## Version 0.6.1 — 2026-10-02
 
 **Technicians share one account across farms; owners remain farm-scoped.**
