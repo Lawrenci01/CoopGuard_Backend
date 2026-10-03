@@ -19,8 +19,8 @@ cd C:\Vault\Projects\CG\backend
 $env:TURSO_DATABASE_URL="libsql://your-database-your-account.turso.io"
 $env:TURSO_AUTH_TOKEN="paste-your-private-database-token"
 npm ci
-npm run provision -- --admin team.admin --output .local/render-admin-account.txt
-npm run provision -- --farm "Pilot farm" --owner cg.owner --technician cg.technician --output .local/render-initial-accounts.txt
+npm run provision -- --require-cloud --admin team.admin --output .local/render-admin-account.txt
+npm run provision -- --require-cloud --farm "Pilot farm" --owner cg.owner --technician cg.technician --output .local/render-initial-accounts.txt
 Remove-Item Env:TURSO_DATABASE_URL
 Remove-Item Env:TURSO_AUTH_TOKEN
 ```
@@ -30,7 +30,7 @@ Save the generated temporary credentials securely, sign in and change every temp
 If an earlier development build created `team.admin` with the retired fixed password, the current backend disables that account and revokes its sessions during startup. Reactivate it with a new random temporary password:
 
 ```powershell
-npm run provision -- --reset-user team.admin --output .local/render-admin-reset.txt
+npm run provision -- --require-cloud --reset-user team.admin --output .local/render-admin-reset.txt
 ```
 
 To replace every account assigned to an existing pilot farm while preserving its survey and farm records, run the private prompt helper:

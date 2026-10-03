@@ -16,6 +16,7 @@ const { values } = parseArgs({
     admin: { type: "string" },
     output: { type: "string" },
     "reset-user": { type: "string" },
+    "require-cloud": { type: "boolean" },
   },
 });
 const output = resolve(
@@ -24,6 +25,10 @@ const output = resolve(
 if (existsSync(output))
   throw new Error(
     "Choose a new output file; existing credentials will not be overwritten.",
+  );
+if (values["require-cloud"] && !turso)
+  throw new Error(
+    "Cloud provisioning requires both TURSO_DATABASE_URL and TURSO_AUTH_TOKEN. No local database changes were made.",
   );
 mkdirSync(dirname(output), { recursive: true });
 const db = await openDatabase(databasePath, turso);
