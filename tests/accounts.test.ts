@@ -10,7 +10,7 @@ import { hashPassword } from "../src/passwords";
 import { seedLocalFarm } from "../src/shared/services/localFarmRepository";
 import type { Session } from "../src/apiTypes";
 import { completeSiteSurvey } from "./siteTestFixture";
-import { reprovisionFarmAccounts } from "../src/accountAdmin";
+import { purgeFarmData, reprovisionFarmAccounts } from "../src/accountAdmin";
 import { pairingQr } from "../src/shared/domain/deviceSimulation";
 
 test("public tunnel requests are remote while private farm hosts are local", () => {
@@ -27,6 +27,66 @@ test("public tunnel requests are remote while private farm hosts are local", () 
     }),
     "cloud",
   );
+});
+
+test("fresh-start reset keeps only administrators and cg.technician", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-purge-"));
+  const db = await openDatabase(join(dir, "test.sqlite"));
+  t.after(async () => {
+    await db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const passwordHash = await hashPassword("Temporary test password 123!");
+  for (const [id, username, role] of [
+    ["admin", "team.admin", "admin"],
+    ["tech", "cg.technician", "technician"],
+    ["extra-tech", "old.technician", "technician"],
+    ["owner", "old.owner", "owner"],
+    ["worker", "old.worker", "worker"],
+  ] as const)
+    await db
+      .prepare(
+        "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(id, username, username, role, passwordHash, Date.now());
+  const farmId = await createFarm(db, "Old farm");
+  await db.batch([
+    {
+      sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+      args: ["owner", farmId],
+    },
+    {
+      sql: "INSERT INTO sessions(digest,user_id,expires_at) VALUES(?,?,?)",
+      args: ["session", "tech", Date.now() + 60_000],
+    },
+    {
+      sql: "INSERT INTO audit(user_id,farm_id,event,at) VALUES(?,?,?,?)",
+      args: ["owner", farmId, "test", Date.now()],
+    },
+  ]);
+
+  const result = await purgeFarmData(db);
+  assert.equal(result.deletedFarms, 1);
+  assert.equal(result.deletedUsers, 3);
+  assert.deepEqual(
+    (await db.prepare("SELECT username FROM users ORDER BY username").all()).map(
+      (row) => row.username,
+    ),
+    ["cg.technician", "team.admin"],
+  );
+  for (const table of [
+    "farms",
+    "farm_codes",
+    "memberships",
+    "sessions",
+    "mutations",
+    "audit",
+    "login_attempts",
+  ])
+    assert.equal(
+      Number((await db.prepare(`SELECT COUNT(*) count FROM ${table}`).get())?.count),
+      0,
+    );
 });
 
 test("farm reprovision revokes old accounts while preserving the farm", async (t) => {

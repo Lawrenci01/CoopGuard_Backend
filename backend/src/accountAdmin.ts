@@ -8,6 +8,46 @@ export interface NewCredential {
   password: string;
 }
 
+export async function purgeFarmData(
+  db: CoopDatabase,
+  technicianUsername = "cg.technician",
+) {
+  const technician = await db
+    .prepare("SELECT id,username,role FROM users WHERE username=?")
+    .get(technicianUsername);
+  if (!technician || technician.role !== "technician")
+    throw new Error(
+      `Required technician account ${technicianUsername} was not found. Nothing was deleted.`,
+    );
+  const admins = await db
+    .prepare("SELECT id,username FROM users WHERE role='admin' ORDER BY username")
+    .all();
+  if (!admins.length)
+    throw new Error("No administrator account was found. Nothing was deleted.");
+  const before = {
+    farms: Number((await db.prepare("SELECT COUNT(*) count FROM farms").get())?.count ?? 0),
+    users: Number((await db.prepare("SELECT COUNT(*) count FROM users").get())?.count ?? 0),
+  };
+  await db.batch([
+    { sql: "DELETE FROM sessions" },
+    { sql: "DELETE FROM login_attempts" },
+    { sql: "DELETE FROM audit" },
+    { sql: "DELETE FROM mutations" },
+    { sql: "DELETE FROM memberships" },
+    { sql: "DELETE FROM farm_codes" },
+    { sql: "DELETE FROM farms" },
+    {
+      sql: "DELETE FROM users WHERE role!='admin' AND NOT (role='technician' AND username=?)",
+      args: [technicianUsername],
+    },
+  ]);
+  return {
+    deletedFarms: before.farms,
+    deletedUsers: before.users - admins.length - 1,
+    preservedUsers: [technicianUsername, ...admins.map((row) => String(row.username))],
+  };
+}
+
 export async function reprovisionFarmAccounts(
   db: CoopDatabase,
   farmName: string,

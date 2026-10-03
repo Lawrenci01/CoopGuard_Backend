@@ -126,6 +126,15 @@ Optional environment variables: `CG_DB_PATH`, `CG_TLS_KEY`, `CG_TLS_CERT`, `CG_H
 - Team admins have no farm membership and use a separate administration workspace. Owners and workers are limited to farms with explicit membership; an owner created by the admin flow has exactly one farm.
 - The one active technician account can access every registered farm. Farm IDs or QRs select a farm; they do not authenticate users. Technician authorization is based on the signed-in role rather than a membership row.
 - Owners create **workers only** within their own farm, and can rename, disable/enable or reset them. They cannot create/edit owners or technicians.
+
+To start with no farms while preserving only administrator accounts and `cg.technician`, first rotate any exposed Turso token and update Render, then run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-render-data.ps1 `
+  -DatabaseUrl "libsql://your-database-your-account.turso.io"
+```
+
+Paste the new token only at the hidden prompt. The reset removes every farm and farm-bound record, deletes owner, worker and extra technician accounts, and revokes all sessions. It aborts unless both cloud credentials are present and the preserved technician and at least one administrator exist.
 - Workers cannot manage accounts, farm setup, flock cycles or sensors. Only technicians complete or change the site survey, approve the generated plan, record installation/commissioning checks, activate a verified operating mode and manage devices; owners manage flock cycles.
 - All server requests validate active session, current role and farm membership. Strict schemas reject role injection and unsupported actions.
 - Temporary passwords require a change before farm access. Minimum password length is 12 characters. Changing/resetting a password or disabling a worker revokes existing sessions.
