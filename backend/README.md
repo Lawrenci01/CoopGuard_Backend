@@ -134,7 +134,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-render-data.ps
   -DatabaseUrl "libsql://your-database-your-account.turso.io"
 ```
 
-Paste the new token only at the hidden prompt. The reset removes every farm and farm-bound record, deletes owner, worker and extra technician accounts, and revokes all sessions. It aborts unless both cloud credentials are present and the preserved technician and at least one administrator exist.
+Paste the new token only at the hidden prompt. The reset removes every farm and farm-bound record, deletes owner, worker and extra technician accounts, and revokes all sessions. It aborts unless both cloud credentials are present and the preserved technician and at least one administrator exist. After the deletion, it reactivates `team.admin` with a newly generated temporary password written to a private `.local` file.
 - Workers cannot manage accounts, farm setup, flock cycles or sensors. Only technicians complete or change the site survey, approve the generated plan, record installation/commissioning checks, activate a verified operating mode and manage devices; owners manage flock cycles.
 - All server requests validate active session, current role and farm membership. Strict schemas reject role injection and unsupported actions.
 - Temporary passwords require a change before farm access. Minimum password length is 12 characters. Changing/resetting a password or disabling a worker revokes existing sessions.
