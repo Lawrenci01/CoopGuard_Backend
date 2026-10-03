@@ -1,4 +1,4 @@
-# Edge AI and JavaScript architecture replan
+ # Edge AI and JavaScript architecture replan
 
 Updated: 2026-09-30. The user has resumed native frontend work using the revised application stack. Backend, AI, and firmware implementation remain subsequent work.
 

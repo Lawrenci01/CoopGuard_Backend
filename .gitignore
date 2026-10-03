@@ -2,6 +2,11 @@
 .env
 .env.*
 !.env.example
+.local/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.key
 
 # Python
 .venv/

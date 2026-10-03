@@ -32,8 +32,16 @@ export function Label({
     />
   );
 }
-export function Card({ children, style }: React.PropsWithChildren<{ style?: ViewStyle }>) {
-  return <View style={[styles.card, style]}>{children}</View>;
+export function Card({
+  children,
+  style,
+  testID,
+}: React.PropsWithChildren<{ style?: ViewStyle; testID?: string }>) {
+  return (
+    <View testID={testID} style={[styles.card, style]}>
+      {children}
+    </View>
+  );
 }
 export function Chip({
   children,

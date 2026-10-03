@@ -26,3 +26,18 @@ export function formatReading(value: number | null, metric: MetricKey): string {
     ? '—'
     : value.toFixed(metric === 'temperature' || metric === 'ammonia' ? 1 : 0);
 }
+
+export function simulatedNodeTrend(
+  sensors: Sensor[],
+  metric: Exclude<MetricKey, 'moisture'>,
+  sampleSeries: number[],
+): number[] {
+  const reporting = sensors.filter(
+    (sensor) => sensor.online && Number.isFinite(sensor.readings[metric]),
+  );
+  if (!reporting.length || !sampleSeries.length) return [];
+  const average =
+    reporting.reduce((sum, sensor) => sum + sensor.readings[metric], 0) / reporting.length;
+  const offset = average - sampleSeries[sampleSeries.length - 1]!;
+  return sampleSeries.map((value) => value + offset);
+}

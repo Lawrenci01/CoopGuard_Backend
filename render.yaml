@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: coopguard-api
+    runtime: node
+    region: singapore
+    plan: free
+    buildCommand: npm --prefix backend ci && npm --prefix backend run typecheck
+    startCommand: npm --prefix backend start
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_VERSION
+        value: 24.21.0
+      - key: CG_HTTPS
+        value: "false"
+      - key: CG_TRUST_PROXY
+        value: "true"
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

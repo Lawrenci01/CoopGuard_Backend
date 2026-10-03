@@ -4,10 +4,10 @@ export const en = {
   welcomeBody: 'Follow conditions in your poultry house and see what needs your attention.',
   welcomeLocal: 'Use this app offline. Your house details, notes, and changes save on this phone.',
   welcomeDemo: 'Open my farm',
-  prepareHouse: 'Set up my house',
-  setupTitle: 'Tell us about the house',
+  prepareHouse: 'Start site survey',
+  setupTitle: 'Complete site survey',
   setupBody:
-    'Save your house details on this phone. Use site-visit findings when available. Readings and equipment remain sample data until a hub is connected.',
+    'Save your house details to the farm server. Use site-visit findings when available. Readings and equipment remain sample data until a hub is connected.',
   setupNames: 'Farm & house',
   farmLabel: 'Farm name',
   houseLabel: 'House name',
@@ -75,6 +75,7 @@ export const en = {
   previewDescription: 'Simulated farm data. No equipment is connected.',
   previewSettings: 'Sample settings',
   nav: {
+    Notes: 'Notes',
     Dashboard: 'Overview',
     Alerts: 'Alerts',
     'Heat Map': 'House map',
@@ -119,7 +120,7 @@ export const en = {
     offline:
       'Equipment actions are unavailable in this scenario. Your notes and house details still save.',
   },
-  role: { owner: 'Owner', worker: 'Worker', technician: 'Technician' },
+  role: { owner: 'Owner', worker: 'Worker', technician: 'Technician', admin: 'Team admin' },
   controlMode: { full: 'Full control', monitor: 'Monitor only' },
   metrics: {
     temperature: 'Temperature',
@@ -194,7 +195,6 @@ export const en = {
   sensor: 'Sensor',
   online: 'Reporting',
   offline: 'No signal',
-  sensorsReporting: '11 of 12 sensors reporting',
   hubPower: 'Hub power OK',
   localFirst: 'Here, even without internet',
   localFirstText: 'Your sensors and farm hub work together locally.',

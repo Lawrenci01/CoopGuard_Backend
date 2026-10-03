@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { View } from 'react-native';
-import { ArrowRight, Check, Fan, ScanLine, Wifi } from 'lucide-react-native';
-import type { MetricKey, Section, Sensor } from '../domain/types';
+import { ArrowRight, Check, Fan, ScanLine } from 'lucide-react-native';
+import type { Section, Sensor } from '../domain/types';
 import { canManageSensors } from '../domain/policy';
 import { SensorEditor } from './FarmManagement';
 import { en, countdown, relativeTime } from '../i18n/en';
@@ -9,85 +9,10 @@ import { metricUnits } from '../data/fixtures';
 import { colors } from '../theme';
 import { useFarm } from '../state/FarmProvider';
 import { Button, Card, Chip, Choice, Label, Sheet, styles } from './ui';
-
-export function PreviewSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const farm = useFarm();
-  return (
-    <Sheet visible={visible} onClose={onClose} title={en.previewTitle}>
-      <Label style={{ color: colors.muted, marginBottom: 22 }}>{en.previewBody}</Label>
-      <View style={{ gap: 24 }}>
-        <View style={{ gap: 9 }}>
-          <Label weight="bold">{en.connectionLabel}</Label>
-          <Choice
-            testPrefix="connection"
-            values={['local', 'cloud', 'offline']}
-            selected={farm.context.connection}
-            labels={en.connectionOptions}
-            onSelect={farm.setConnection}
-          />
-          <Label style={{ color: colors.muted, fontSize: 12 }}>
-            {en.connectionHelp[farm.context.connection]}
-          </Label>
-        </View>
-        <View style={{ gap: 9 }}>
-          <Label weight="bold">{en.roleLabel}</Label>
-          <Choice
-            testPrefix="role"
-            values={['owner', 'worker', 'technician']}
-            selected={farm.context.role}
-            labels={en.role}
-            onSelect={farm.setRole}
-          />
-        </View>
-        <View style={{ gap: 9 }}>
-          <Label weight="bold">{en.controlLabel}</Label>
-          <Choice
-            testPrefix="control"
-            values={['full', 'monitor']}
-            selected={farm.context.controlMode}
-            labels={en.controlMode}
-            onSelect={farm.setControlMode}
-          />
-        </View>
-        {farm.snapshot.request?.status === 'pending' && (
-          <Card style={{ backgroundColor: colors.amberSoft }}>
-            <Label style={{ marginBottom: 12 }}>{en.reconnectHelp}</Label>
-            <Button
-              onPress={async () => {
-                await farm.reconnect();
-                onClose();
-              }}
-              icon={Wifi}
-            >
-              {en.reconnect}
-            </Button>
-          </Card>
-        )}
-        <View style={{ gap: 9 }}>
-          <Label weight="bold">{en.aiDemoState}</Label>
-          <Choice
-            values={['collecting', 'unavailable']}
-            selected={farm.aiState}
-            labels={en.aiStateOptions}
-            onSelect={farm.setAIState}
-          />
-        </View>
-        <Button
-          variant="secondary"
-          onPress={async () => {
-            onClose();
-            await farm.returnWelcome();
-          }}
-        >
-          {en.returnWelcome}
-        </Button>
-      </View>
-    </Sheet>
-  );
-}
+import { enabledMetrics } from '../domain/siteWorkflow';
 
 export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClose: () => void }) {
-  const { snapshot, now, context } = useFarm();
+  const { snapshot, now, context, data } = useFarm();
   return (
     <Sheet
       visible={!!sensor}
@@ -96,6 +21,9 @@ export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClos
     >
       {sensor && (
         <View style={{ gap: 18 }}>
+          {sensor.id.startsWith('NODE-') && (
+            <Label style={{ color: colors.muted }}>{sensor.id} · simulated full-sensor node</Label>
+          )}
           <View style={styles.row}>
             <Chip tone={sensor.online ? 'green' : 'muted'} dot>
               {context.connection !== 'local'
@@ -122,7 +50,7 @@ export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClos
             )}
           </Label>
           <View>
-            {(Object.keys(en.metrics) as MetricKey[]).map((metric) => (
+            {enabledMetrics(data.site).map((metric) => (
               <View
                 key={metric}
                 style={{
@@ -157,9 +85,10 @@ export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClos
               <Label weight="bold">{en[sensor.signal]}</Label>
             </View>
           </View>
-          {canManageSensors(context) && snapshot.sensors.some((n) => n.id === sensor.id) && (
-            <SensorEditor key={sensor.id} sensor={sensor} onClose={onClose} />
-          )}
+          {(canManageSensors(context) || (context.role === 'technician' && !!data.site.survey)) &&
+            snapshot.sensors.some((n) => n.id === sensor.id) && (
+              <SensorEditor key={sensor.id} sensor={sensor} onClose={onClose} />
+            )}
         </View>
       )}
     </Sheet>

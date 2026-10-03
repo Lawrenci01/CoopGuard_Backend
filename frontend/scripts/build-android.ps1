@@ -9,14 +9,19 @@ $env:ANDROID_HOME = $cgSdk
 $env:ANDROID_SDK_ROOT = $cgSdk
 $env:NODE_ENV = 'production'
 $env:CI = '1'
-$env:COOPGUARD_OFFLINE_APK = '1'
 Push-Location $cgFrontend
 try {
-  & npx.cmd expo prebuild --platform android --no-install --no-clean
+  # Windows PowerShell can turn redirected native stderr warnings into terminating
+  # errors. Keep the output and decide success using the process exit code.
+  $ErrorActionPreference = 'Continue'
+  try { & npx.cmd expo prebuild --platform android --no-install --no-clean }
+  finally { $ErrorActionPreference = 'Stop' }
   if ($LASTEXITCODE -ne 0) { throw 'Android project generation failed.' }
   Push-Location (Join-Path $cgFrontend 'android')
   try {
-    & .\gradlew.bat :app:assembleRelease "-PreactNativeArchitectures=$Architectures" --max-workers=2 --console=plain
+    $ErrorActionPreference = 'Continue'
+    try { & .\gradlew.bat :app:assembleRelease "-PreactNativeArchitectures=$Architectures" --max-workers=2 --console=plain }
+    finally { $ErrorActionPreference = 'Stop' }
     if ($LASTEXITCODE -ne 0) { throw 'Android build failed.' }
   } finally { Pop-Location }
   $cgOutput = Join-Path $cgFrontend 'dist\android'

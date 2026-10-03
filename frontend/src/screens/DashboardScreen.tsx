@@ -1,301 +1,174 @@
 import { useState } from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import {
-  ArrowRight,
-  ArrowUpRight,
-  Droplets,
-  Fan,
-  Flame,
-  Lightbulb,
-  Thermometer,
-  Wind,
-  Cloud,
-  Leaf,
-  ShieldCheck,
-  Radio,
-  TriangleAlert,
-} from 'lucide-react-native';
+import { ArrowRight, CheckCircle2, TriangleAlert } from 'lucide-react-native';
 import { en, relativeTime } from '../i18n/en';
 import { colors } from '../theme';
 import { useFarm } from '../state/FarmProvider';
-import { Button, Card, Chip, Label, SectionTitle, styles } from '../components/ui';
+import { Button, Card, Label, Sheet, styles } from '../components/ui';
 import { ScreenFrame } from '../components/ScreenFrame';
-import { BarnIllustration } from '../components/BarnIllustration';
-import { AIInsights } from '../components/AIInsights';
-import { TrendChart } from '../components/TrendChart';
-import { FloorPlan } from '../components/FloorPlan';
-import { ControlSheet, RequestStatus, SensorSheet } from '../components/FarmSheets';
-import { metricUnits, trendValues } from '../data/fixtures';
-import { canRequestControl } from '../domain/policy';
+import { Equipment } from '../components/Equipment';
+import { FlockManager } from '../components/FarmManagement';
+import { HouseSetupForm } from '../components/HouseSetupForm';
+import { metricUnits } from '../data/fixtures';
 import { formatReading, summarizeReadings } from '../domain/readings';
-import type { MetricKey, Sensor, TabName } from '../domain/types';
-import { flockDay } from '../services/localFarmRepository';
+import { houseAttention } from '../domain/attention';
+import type { TabName } from '../domain/types';
+import { roleHomeTitle } from '../domain/roles';
+import { enabledMetrics } from '../domain/siteWorkflow';
 
 export function DashboardScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<Record<TabName, undefined>>>();
   const { snapshot, context, now, data } = useFarm();
-  const { width } = useWindowDimensions();
-  const columns = width >= 1180;
-  const [confirm, setConfirm] = useState(false),
-    [sensor, setSensor] = useState<Sensor | null>(null);
-  const metrics: { key: MetricKey; icon: typeof Thermometer }[] = [
-    { key: 'temperature', icon: Thermometer },
-    { key: 'humidity', icon: Droplets },
-    { key: 'ammonia', icon: Wind },
-    { key: 'co2', icon: Cloud },
-  ];
-  const requestActive = snapshot.request?.status === 'pending' || snapshot.fanStage === 'full';
+  const [setup, setSetup] = useState(false),
+    [next, setNext] = useState(false);
+  const attention = houseAttention(snapshot);
+  const clear = attention.kind === 'clear';
+  const title =
+    attention.kind === 'alert'
+      ? en[attention.alert.titleKey]
+      : attention.kind === 'reading'
+        ? `Check ${en.metrics[attention.metric].toLowerCase()}`
+        : attention.kind === 'incomplete'
+          ? 'Some readings are missing'
+          : 'No active issues reported';
+  const body =
+    attention.kind === 'alert'
+      ? attention.alert.titleKey === 'heatAlert'
+        ? `Check the fans and airflow in Section ${attention.alert.section}.`
+        : 'Check the sensor’s power and position.'
+      : attention.kind === 'reading'
+        ? 'Open the house map to see where to check.'
+        : attention.kind === 'incomplete'
+          ? 'Check the sensors before relying on the house average.'
+          : 'Keep checking the house during your usual rounds.';
+  const reporting = snapshot.sensors.filter((s) => s.online).length;
+  const overviewMetrics = enabledMetrics(data.site).slice(0, 2);
   return (
-    <ScreenFrame
-      tab="Dashboard"
-      action={
-        <Chip dot>
-          {data.flock
-            ? `Day ${flockDay(data.flock, now)} · ${data.flock.birds.toLocaleString()} birds`
-            : 'No active flock'}
-        </Chip>
-      }
-    >
-      <View style={{ flexDirection: columns ? 'row' : 'column', gap: 18 }}>
-        <Card
-          style={{
-            flex: 1.9,
-            backgroundColor: '#EAF0E1',
-            borderColor: '#E0E8D5',
-            padding: 26,
-            minHeight: 217,
-            overflow: 'hidden',
-          }}
-        >
-          <View style={{ maxWidth: width > 600 ? '65%' : '100%', gap: 13, zIndex: 1 }}>
-            <Chip tone="green">
-              <Leaf size={11} color={colors.green} /> {en.conditions}
-            </Chip>
-            <Label
-              weight="bold"
-              style={{ fontSize: 25, lineHeight: 33, letterSpacing: -0.6, color: colors.ink }}
-            >
-              {en.houseSummary}
-            </Label>
-            <Label style={{ maxWidth: 325, fontSize: 13, lineHeight: 21, color: '#62745C' }}>
-              {en.houseSummaryText}
-            </Label>
-            <Button
-              compact
-              variant="ghost"
-              icon={ArrowUpRight}
-              onPress={() => navigation.navigate('Heat Map')}
-            >
-              {en.viewMap}
-            </Button>
-          </View>
-          {width > 600 && (
-            <View style={{ position: 'absolute', right: -8, bottom: 0, width: '44%', height: 190 }}>
-              <BarnIllustration />
-            </View>
-          )}
-        </Card>
-        <Card style={{ flex: 1, backgroundColor: '#FFF9EF', borderColor: '#EDDFC5', gap: 12 }}>
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <View style={[styles.row, { gap: 6 }]}>
-              <TriangleAlert size={16} color={colors.amber} />
-              <Label weight="bold" style={{ color: colors.amber, fontSize: 11 }}>
-                {en.attention}
-              </Label>
-            </View>
-            <Label style={{ color: '#A3947E', fontSize: 10 }}>
-              {relativeTime(snapshot.alerts[0]?.detectedAt ?? snapshot.sampledAt, now)}
-            </Label>
-          </View>
-          <Label weight="bold" style={{ fontSize: 18, lineHeight: 25 }}>
-            {en.heatAlert}
+    <ScreenFrame tab="Dashboard" title={roleHomeTitle[context.role]}>
+      <Card
+        testID="house-attention"
+        style={{
+          padding: 18,
+          gap: 12,
+          backgroundColor: clear ? colors.greenSoft : colors.amberSoft,
+        }}
+      >
+        {!clear && (
+          <Label weight="bold" style={{ fontSize: 12, color: colors.amber }}>
+            Needs attention
           </Label>
-          <View style={styles.row}>
-            <Label
-              weight="bold"
-              style={{ color: colors.amber, fontSize: 32, lineHeight: 40, letterSpacing: -1 }}
-            >
-              31.8<Label style={{ color: colors.amber, fontSize: 17 }}> °C</Label>
-            </Label>
-            <Chip tone="amber">{en.statuses.watch}</Chip>
-          </View>
+        )}
+        <View style={styles.row}>
+          {clear ? (
+            <CheckCircle2 size={21} color={colors.green} />
+          ) : (
+            <TriangleAlert size={21} color={colors.amber} />
+          )}
+          <Label weight="bold" style={{ flex: 1, fontSize: 20, lineHeight: 27 }}>
+            {title}
+          </Label>
+        </View>
+        <Label>{body}</Label>
+        {!clear && (
           <Button
-            variant="ghost"
+            testID="overview-attention-action"
             compact
             icon={ArrowRight}
-            onPress={() => navigation.navigate('Alerts')}
+            onPress={() => navigation.navigate(attention.kind === 'alert' ? 'Alerts' : 'Heat Map')}
           >
-            {en.viewAlerts}
+            {attention.kind === 'alert'
+              ? `View ${attention.count > 1 ? `${attention.count} alerts` : 'alert'}`
+              : 'Take a look'}
           </Button>
-        </Card>
-      </View>
-      <View>
-        <SectionTitle
-          title={en.conditions}
-          subtitle={`From ${snapshot.sensors.filter((s) => s.online).length} reporting sensors`}
-        />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
-          {metrics.map(({ key, icon: Icon }) => {
-            const summary = summarizeReadings(snapshot.sensors, key);
-            const watch = summary.condition === 'watch';
+        )}
+      </Card>
+      <Card style={{ padding: 18, gap: 14 }}>
+        <View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}>
+          <Label weight="bold">House readings</Label>
+          <Label style={{ color: colors.muted, fontSize: 11 }}>
+            {context.connection === 'local' ? 'Recorded' : 'Saved'}{' '}
+            {relativeTime(snapshot.sampledAt, now).toLowerCase()}
+          </Label>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 20 }}>
+          {overviewMetrics.map((metric) => {
+            const summary = summarizeReadings(snapshot.sensors, metric);
             return (
-              <Card
-                key={key}
-                style={{
-                  flexBasis: columns ? 0 : width < 380 ? '100%' : '45%',
-                  flexGrow: 1,
-                  padding: width < 600 ? 16 : 19,
-                  gap: 12,
-                }}
-              >
-                <View style={[styles.row, { justifyContent: 'space-between' }]}>
-                  <View
-                    style={{
-                      padding: 8,
-                      borderRadius: 10,
-                      backgroundColor: watch ? colors.amberSoft : colors.greenSoft,
-                    }}
-                  >
-                    <Icon size={19} color={watch ? colors.amber : colors.green} strokeWidth={1.7} />
-                  </View>
-                  <Chip
-                    tone={watch ? 'amber' : summary.condition === 'unavailable' ? 'muted' : 'green'}
-                  >
-                    {summary.condition === 'unavailable'
-                      ? en.incompleteReadings
-                      : en.statuses[summary.condition]}
-                  </Chip>
-                </View>
-                <View>
-                  <Label style={{ color: colors.muted, fontSize: 12 }}>{en.metrics[key]}</Label>
-                  <Label
-                    weight="bold"
-                    style={{ fontSize: 30, lineHeight: 39, color: colors.ink, letterSpacing: -1 }}
-                  >
-                    {formatReading(summary.value, key)}
-                    <Label style={{ fontSize: 13, color: colors.muted }}> {metricUnits[key]}</Label>
-                  </Label>
-                </View>
-                <TrendChart values={trendValues[key]} compact />
-              </Card>
+              <View key={metric} style={{ flex: 1, gap: 3 }}>
+                <Label style={{ color: colors.muted, fontSize: 12 }}>{en.metrics[metric]}</Label>
+                <Label weight="bold" style={{ fontSize: 29, lineHeight: 38 }}>
+                  {formatReading(summary.value, metric)}
+                  <Label style={{ fontSize: 15 }}> {metricUnits[metric]}</Label>
+                </Label>
+              </View>
             );
           })}
         </View>
-      </View>
-      <View style={{ flexDirection: columns ? 'row' : 'column', gap: 18 }}>
-        <Card style={{ flex: 1.9 }}>
-          <SectionTitle
-            title={en.chartTitle}
-            subtitle={en.chartSubtitle}
-            action={en.chartView}
-            onAction={() => navigation.navigate('Analytics')}
-          />
-          <View style={[styles.row, { marginBottom: 14 }]}>
-            <Label weight="bold" style={{ color: colors.ink, fontSize: 27 }}>
-              29.2°
-            </Label>
-            <Chip tone="muted">{en.sampleHistory}</Chip>
-          </View>
-          <TrendChart values={trendValues.temperature} />
-        </Card>
-        <Card style={{ flex: 1, gap: 15 }}>
-          <SectionTitle title={en.controls} />
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <View style={styles.row}>
-              <View style={{ padding: 10, backgroundColor: colors.greenSoft, borderRadius: 12 }}>
-                <Fan size={24} color={colors.green} />
-              </View>
-              <View>
-                <Label weight="bold">{en.fanSection}</Label>
-                <Label style={{ color: colors.muted, fontSize: 11 }}>
-                  {context.connection !== 'local'
-                    ? en.savedStatus
-                    : context.controlMode === 'monitor'
-                      ? en.controlMode.monitor
-                      : snapshot.fanStage === 'full'
-                        ? en.override
-                        : en.auto}
-                </Label>
-              </View>
-            </View>
-            <Label weight="bold" style={{ fontSize: 21 }}>
-              {context.controlMode === 'monitor'
-                ? '—'
-                : snapshot.fanStage === 'full'
-                  ? en.fanStageFull
-                  : en.fanStageHigh}
-            </Label>
-          </View>
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <View style={styles.row}>
-              <Flame size={17} color={colors.muted} />
-              <Label>{en.heater}</Label>
-            </View>
-            <Label style={{ color: colors.muted }}>
-              {context.controlMode === 'monitor' ? '—' : en.heaterOff}
-            </Label>
-          </View>
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <View style={styles.row}>
-              <Lightbulb size={17} color={colors.muted} />
-              <Label>{en.lights}</Label>
-            </View>
-            <Label>{context.controlMode === 'monitor' ? '—' : en.lightsOn}</Label>
-          </View>
-          <Label style={{ color: colors.muted, fontSize: 11, lineHeight: 17 }}>
-            {context.controlMode === 'monitor' ? en.monitorNote : en.controlNote}
+        {reporting !== snapshot.sensors.length && (
+          <Label style={{ color: colors.amber, fontSize: 12 }}>
+            {reporting} of {snapshot.sensors.length} nodes reporting · partial coverage
           </Label>
-          {context.controlMode === 'full' && (
-            <Button
-              testID="full-power"
-              disabled={!canRequestControl(context) || requestActive}
-              onPress={() => setConfirm(true)}
-              icon={ArrowUpRight}
-            >
-              {en.fullPower}
-            </Button>
-          )}
-          <RequestStatus />
-        </Card>
-      </View>
-      <View style={{ flexDirection: columns ? 'row' : 'column', gap: 18 }}>
-        <Card style={{ flex: 1.9 }}>
-          <SectionTitle
-            title={en.floorPlan}
-            subtitle={en.dimensions}
-            action={en.viewMap}
-            onAction={() => navigation.navigate('Heat Map')}
-          />
-          <FloorPlan sensors={snapshot.sensors} metric="temperature" onSelect={setSensor} compact />
-        </Card>
-        <Card style={{ flex: 1, gap: 15, backgroundColor: '#F0F3E9' }}>
-          <Leaf size={25} color={colors.green} />
-          <Label style={{ color: colors.muted, fontSize: 12 }}>{en.flies}</Label>
-          <Label weight="bold" style={{ fontSize: 21 }}>
-            {en.flyTitle}
+        )}
+        <Button compact variant="ghost" onPress={() => navigation.navigate('Heat Map')}>
+          All readings & house map
+        </Button>
+      </Card>
+      {(!data.site.survey || (data.site.plan?.equipment.length ?? 0) > 0) && <Equipment />}
+      {context.role === 'owner' && data.site.survey && !data.flock && <FlockManager nextStep />}
+      {context.role === 'worker' && (
+        <Button variant="secondary" onPress={() => navigation.navigate('Notes')}>
+          Record an inspection
+        </Button>
+      )}
+      {context.role === 'technician' && (
+        <Button variant="secondary" onPress={() => navigation.navigate('Devices')}>
+          Sensors & maintenance
+        </Button>
+      )}
+      {!data.site.survey && context.role === 'technician' ? (
+        <Button testID="setup-from-home" variant="secondary" onPress={() => setSetup(true)}>
+          Start site survey
+        </Button>
+      ) : !data.site.survey && context.role === 'owner' ? (
+        <Card style={{ gap: 8 }}>
+          <Label weight="bold">Site survey needed</Label>
+          <Label>
+            A CoopGuard technician will survey this house, record its equipment, and prepare the
+            approved setup. You can add your flock after the survey is saved.
           </Label>
-          <Label style={{ color: colors.muted, lineHeight: 22 }}>{en.flyBody}</Label>
-          <Chip tone="muted">{en.beta}</Chip>
         </Card>
-      </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 20 }}>
-        <View style={styles.row}>
-          <Radio size={16} color={colors.muted} />
-          <Label style={{ color: colors.muted, fontSize: 12 }}>
-            {snapshot.sensors.filter((s) => s.online).length} of {snapshot.sensors.length} sensors
-            reporting
+      ) : data.site.survey && context.role === 'technician' ? (
+        <Button testID="setup-next-steps" compact variant="ghost" onPress={() => setNext(true)}>
+          Survey & installation status
+        </Button>
+      ) : null}
+      {setup && (
+        <Sheet visible title={en.setupTitle} onClose={() => setSetup(false)}>
+          <HouseSetupForm onDone={() => setSetup(false)} />
+        </Sheet>
+      )}
+      <Sheet visible={next} title="Site survey saved" onClose={() => setNext(false)}>
+        <View style={{ gap: 18 }}>
+          <Label weight="bold">1. {data.site.survey?.farm.houseName} is recorded</Label>
+          <Label>
+            Your house details are saved to the farm server and kept on this phone. Readings and
+            equipment responses are still samples.
           </Label>
+          <Label weight="bold">2. Confirm the equipment plan</Label>
+          <Label>
+            Record the site findings, place sensors, and keep unverified equipment in monitor-only
+            mode.
+          </Label>
+          <Label weight="bold">3. Complete installation checks</Label>
+          <Label>
+            A technician must pair the hub and sensors, check wiring, and calibrate them. Saving
+            this form does not make the house live.
+          </Label>
+          <Button onPress={() => setNext(false)}>Got it</Button>
         </View>
-        <View style={styles.row}>
-          <ShieldCheck size={16} color={colors.green} />
-          <Label style={{ color: colors.muted, fontSize: 12 }}>{en.hubPower}</Label>
-        </View>
-      </View>
-      <AIInsights />
-      <ControlSheet visible={confirm} onClose={() => setConfirm(false)} />
-      <SensorSheet sensor={sensor} onClose={() => setSensor(null)} />
+      </Sheet>
     </ScreenFrame>
   );
 }

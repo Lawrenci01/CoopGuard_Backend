@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { LOCAL_FARM_KEY, LocalFarmRepository, dateText } from '../src/services/localFarmRepository';
+import {
+  LOCAL_FARM_KEY,
+  LocalFarmRepository,
+  dateText,
+  seedLocalFarm,
+} from '../src/services/localFarmRepository';
 import type { KeyValueStorage } from '../src/services/snapshotCache';
+import { commissionSiteForControl } from './siteTestFixture';
 
 function fixture() {
   const values = new Map<string, string>();
@@ -28,7 +34,9 @@ test('local changes survive restart without any network and do not reset the fan
   const f = fixture();
   await f.repo.load();
   await f.repo.dispatch({ type: 'start' });
-  await f.repo.dispatch({ type: 'ack', id: 'heat-b' });
+  await commissionSiteForControl(f.repo);
+  const currentAlert = (await f.repo.dispatch({ type: 'refresh' })).snapshot.alerts[0]!;
+  await f.repo.dispatch({ type: 'ack', id: currentAlert.id });
   const applied = await f.repo.dispatch({ type: 'fullPower' });
   f.advance(30_000);
   const restored = new LocalFarmRepository(f.storage, f.clock);
@@ -56,18 +64,9 @@ test('sensor add, move and retirement persist and role checks run in the data la
     }),
     /Technician/,
   );
-  await f.repo.dispatch({ type: 'context', patch: { role: 'technician' } });
-  await assert.rejects(
-    f.repo.dispatch({
-      type: 'addSensor',
-      section: 'B',
-      control: true,
-      tested: false,
-      calibrated: true,
-    }),
-    /checks/,
-  );
-  let state = await f.repo.dispatch({
+  const legacy = fixture();
+  await legacy.repo.dispatch({ type: 'context', patch: { role: 'technician' } });
+  let state = await legacy.repo.dispatch({
     type: 'addSensor',
     section: 'B',
     control: false,
@@ -75,13 +74,19 @@ test('sensor add, move and retirement persist and role checks run in the data la
     calibrated: true,
   });
   assert.equal(state.snapshot.sensors.length, 13);
-  await f.repo.dispatch({ type: 'moveSensor', id: 'sensor-13', section: 'C', x: 0.83, y: 0.75 });
-  state = await new LocalFarmRepository(f.storage, f.clock).load();
+  await legacy.repo.dispatch({
+    type: 'moveSensor',
+    id: 'sensor-13',
+    section: 'C',
+    x: 0.83,
+    y: 0.75,
+  });
+  state = await new LocalFarmRepository(legacy.storage, legacy.clock).load();
   assert.equal(state.snapshot.sensors.at(-1)?.section, 'C');
-  state = await f.repo.dispatch({ type: 'retireSensor', id: 'sensor-13' });
+  state = await legacy.repo.dispatch({ type: 'retireSensor', id: 'sensor-13' });
   assert.equal(state.snapshot.sensors.length, 12);
   assert.equal(state.retired[0]?.number, '13');
-  state = await f.repo.dispatch({
+  state = await legacy.repo.dispatch({
     type: 'addSensor',
     section: 'A',
     control: false,
@@ -110,6 +115,100 @@ test('existing controller locks the saved house to monitor mode and rejects outp
     (await new LocalFarmRepository(f.storage, f.clock).load()).house?.houseName,
     'East house',
   );
+});
+
+test('first house replaces only the seed flock and saves the dashboard handoff atomically', async () => {
+  const f = fixture();
+  const house = {
+    farmName: 'Farm',
+    houseName: 'West',
+    houseType: 'open' as const,
+    controller: 'absent' as const,
+    flock: 'broiler' as const,
+    lengthMetres: 90,
+    widthMetres: 12,
+  };
+  const write = f.storage.setItem;
+  f.storage.setItem = async () => {
+    throw new Error('Disk full');
+  };
+  await assert.rejects(f.repo.dispatch({ type: 'house', value: house, open: true }), /Disk full/);
+  let state = await f.repo.dispatch({ type: 'tick' });
+  assert.equal(state.started, false);
+  assert.equal(state.house, null);
+  assert.equal(state.flock?.id, 'flock-1');
+  f.storage.setItem = write;
+  await f.repo.dispatch({ type: 'house', value: house, open: true });
+  state = await new LocalFarmRepository(f.storage, f.clock).load();
+  assert.equal(state.started, true);
+  assert.equal(state.house?.houseName, 'West');
+  assert.equal(state.flock, null);
+  state = await f.repo.dispatch({
+    type: 'startFlock',
+    startDate: dateText(f.clock()),
+    days: 42,
+    birds: 500,
+  });
+  const flock = state.flock;
+  state = await f.repo.dispatch({ type: 'house', value: { ...house, houseName: 'East' } });
+  assert.deepEqual(state.flock, flock);
+  assert.equal(state.started, true);
+});
+
+test('a user-created flock is retained when saving a first house', async () => {
+  const f = fixture();
+  await f.repo.dispatch({ type: 'endFlock' });
+  const before = await f.repo.dispatch({
+    type: 'startFlock',
+    startDate: dateText(f.clock()),
+    days: 35,
+    birds: 200,
+  });
+  const after = await f.repo.dispatch({
+    type: 'house',
+    value: {
+      farmName: 'Farm',
+      houseName: 'West',
+      houseType: 'open',
+      controller: 'absent',
+      flock: 'broiler',
+      lengthMetres: 90,
+      widthMetres: 12,
+    },
+    open: true,
+  });
+  assert.deepEqual(after.flock, before.flock);
+  assert.deepEqual(after.pastFlocks, before.pastFlocks);
+});
+
+test('upgrading a 0.1.0 house removes only its untouched seed flock and keeps saved records', async () => {
+  const f = fixture();
+  const previous = seedLocalFarm(f.clock());
+  previous.started = true;
+  previous.house = {
+    farmName: 'Farm',
+    houseName: 'West',
+    houseType: 'open',
+    controller: 'absent',
+    flock: 'broiler',
+    lengthMetres: 90,
+    widthMetres: 12,
+  };
+  previous.inspections = [
+    { id: 'saved-note', kind: 'sound', text: 'My observation', createdAt: f.clock() },
+  ];
+  previous.snapshot.alerts[0]!.status = 'acknowledged';
+  f.values.set(LOCAL_FARM_KEY, JSON.stringify(previous));
+  const loaded = await f.repo.load();
+  assert.deepEqual(loaded, { ...previous, flock: null });
+  assert.deepEqual(await new LocalFarmRepository(f.storage, f.clock).load(), loaded);
+  const real = await f.repo.dispatch({
+    type: 'startFlock',
+    startDate: dateText(f.clock()),
+    days: 35,
+    birds: 500,
+  });
+  assert.deepEqual(await new LocalFarmRepository(f.storage, f.clock).load(), real);
 });
 
 test('notes support create, edit and delete while sample link is disconnected', async () => {

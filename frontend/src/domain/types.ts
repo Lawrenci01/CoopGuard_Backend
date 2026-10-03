@@ -1,6 +1,6 @@
-export type TabName = 'Dashboard' | 'Alerts' | 'Heat Map' | 'Analytics' | 'Devices';
+export type TabName = 'Dashboard' | 'Alerts' | 'Heat Map' | 'Analytics' | 'Devices' | 'Notes';
 export type ConnectionMode = 'local' | 'cloud' | 'offline';
-export type Role = 'owner' | 'worker' | 'technician';
+export type Role = 'owner' | 'worker' | 'technician' | 'admin';
 export type ControlMode = 'full' | 'monitor';
 export type Condition = 'good' | 'watch' | 'urgent' | 'unavailable';
 export type MetricKey = 'temperature' | 'humidity' | 'ammonia' | 'co2' | 'moisture';

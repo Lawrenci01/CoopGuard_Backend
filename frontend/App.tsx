@@ -1,5 +1,5 @@
-﻿import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,28 +11,33 @@ import { DMSans_700Bold } from '@expo-google-fonts/dm-sans/700Bold';
 import {
   Bell,
   ChartNoAxesCombined,
+  CheckCircle2,
   House,
   LayoutDashboard,
   Map,
   Radio,
-  Wifi,
-  Cloud,
-  WifiOff,
+  NotebookPen,
   type LucideIcon,
 } from 'lucide-react-native';
 import { en, relativeTime } from './src/i18n/en';
 import { colors, fonts } from './src/theme';
 import type { TabName } from './src/domain/types';
+import { roleTabs } from './src/domain/roles';
+import { AuthProvider, useAuth } from './src/state/AuthProvider';
 import { FarmProvider, useFarm } from './src/state/FarmProvider';
-import { Button, Chip, IconButton, Label, styles } from './src/components/ui';
+import { Button, Card, Chip, Label, styles } from './src/components/ui';
+import { AccountSheet } from './src/components/AccountSheet';
 import { flockDay } from './src/services/localFarmRepository';
-import { PreviewSheet } from './src/components/FarmSheets';
+import { deviceSetupProgress } from './src/domain/deviceSimulation';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { AlertsScreen } from './src/screens/AlertsScreen';
 import { HeatMapScreen } from './src/screens/HeatMapScreen';
 import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { DevicesScreen } from './src/screens/DevicesScreen';
-import { OnboardingScreen } from './src/screens/OnboardingScreen';
+import { NotesScreen } from './src/screens/NotesScreen';
+import { LoginScreen } from './src/screens/LoginScreen';
+import { TechnicianFarmSelector } from './src/components/TechnicianFarmSelector';
+import { AdminScreen } from './src/screens/AdminScreen';
 
 const Tabs = createBottomTabNavigator<Record<TabName, undefined>>();
 const icons: Record<TabName, LucideIcon> = {
@@ -41,24 +46,34 @@ const icons: Record<TabName, LucideIcon> = {
   'Heat Map': Map,
   Analytics: ChartNoAxesCombined,
   Devices: Radio,
+  Notes: NotebookPen,
 };
-
 function Navigation({ state, navigation }: BottomTabBarProps) {
-  const insets = useSafeAreaInsets();
-  const { snapshot } = useFarm();
-  const count = snapshot.alerts.filter((alert) => alert.status === 'active').length;
+  const insets = useSafeAreaInsets(),
+    { snapshot, context } = useFarm();
+  const count = snapshot.alerts.filter((a) => a.status !== 'resolved').length;
   return (
-    <View style={[appStyles.bottomNav, { paddingBottom: Math.max(insets.bottom, 9) }]}>
+    <View
+      style={{
+        backgroundColor: colors.surface,
+        borderTopWidth: 1,
+        borderColor: colors.border,
+        paddingTop: 8,
+        paddingBottom: Math.max(insets.bottom, 9),
+        flexDirection: 'row',
+      }}
+    >
       {state.routes.map((route, index) => {
         const name = route.name as TabName,
           active = state.index === index,
-          Icon = icons[name];
+          Icon = name === 'Devices' && context.role === 'owner' ? House : icons[name];
+        const label = name === 'Devices' && context.role === 'owner' ? 'Farm' : en.nav[name];
         return (
           <Pressable
             key={route.key}
-            testID={'nav-' + name.replace(' ', '-')}
+            testID={`nav-${name.replace(' ', '-')}`}
             accessibilityRole="tab"
-            accessibilityLabel={en.nav[name]}
+            accessibilityLabel={label}
             accessibilityState={{ selected: active }}
             onPress={() => {
               const event = navigation.emit({
@@ -68,30 +83,41 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
               });
               if (!event.defaultPrevented) navigation.navigate(route.name);
             }}
-            onLongPress={() => navigation.emit({ type: 'tabLongPress', target: route.key })}
-            style={({ pressed }) => [
-              appStyles.bottomLink,
-              pressed && { backgroundColor: colors.greenSoft },
-            ]}
+            style={{
+              flex: 1,
+              minHeight: 52,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 5,
+              paddingHorizontal: 3,
+            }}
           >
             <View>
-              <Icon
-                size={23}
-                color={active ? colors.green : colors.muted}
-                strokeWidth={active ? 2 : 1.65}
-              />
-              {name === 'Alerts' && count > 0 && <View style={appStyles.notificationDot} />}
+              <Icon size={23} color={active ? colors.green : colors.muted} />
+              {name === 'Alerts' && count > 0 && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    right: -3,
+                    top: -2,
+                    width: 7,
+                    height: 7,
+                    borderRadius: 5,
+                    backgroundColor: colors.amber,
+                  }}
+                />
+              )}
             </View>
             <Label
               weight={active ? 'bold' : 'medium'}
               style={{
                 fontSize: 11,
                 lineHeight: 16,
-                textAlign: 'center',
                 color: active ? colors.green : colors.muted,
+                textAlign: 'center',
               }}
             >
-              {en.nav[name]}
+              {label}
             </Label>
           </Pressable>
         );
@@ -99,13 +125,11 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
     </View>
   );
 }
-
-function AppHeader({ onPreview, onAlerts }: { onPreview: () => void; onAlerts: () => void }) {
-  const { context, snapshot, now, data } = useFarm();
-  const insets = useSafeAreaInsets();
-  const ConnectionIcon =
-    context.connection === 'local' ? Wifi : context.connection === 'cloud' ? Cloud : WifiOff;
-  const connectionColor = context.connection === 'local' ? colors.green : colors.amber;
+function Header({ onAccount }: { onAccount: () => void }) {
+  const { data, context, now, syncing, connected, lastSyncedAt, pendingCount } = useFarm(),
+    auth = useAuth(),
+    insets = useSafeAreaInsets();
+  const r = auth.record!;
   return (
     <View
       style={{
@@ -115,126 +139,176 @@ function AppHeader({ onPreview, onAlerts }: { onPreview: () => void; onAlerts: (
         paddingHorizontal: 18,
         paddingTop: insets.top + 10,
         paddingBottom: 8,
-        gap: 4,
+        gap: 6,
       }}
     >
       <View style={[styles.row, { justifyContent: 'space-between' }]}>
-        <View style={[styles.row, { flex: 1 }]}>
-          <View style={appStyles.houseIcon}>
-            <House size={20} color={colors.green} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Label weight="bold" style={{ fontSize: 15 }}>
-              {data.house?.houseName ?? en.house}
-            </Label>
-            <Label style={{ color: colors.muted, fontSize: 11, lineHeight: 17 }}>
-              {data.flock
-                ? `${data.house ? en.flockOptions[data.house.flock] : 'Broiler'} · Day ${flockDay(data.flock, now)} of ${data.flock.days}`
-                : 'No active flock'}
-            </Label>
-          </View>
+        <House size={23} color={colors.green} />
+        <View style={{ flex: 1 }}>
+          <Label weight="bold" style={{ fontSize: 15 }}>
+            {data.house?.houseName ??
+              r.session.farms.find((f) => f.id === r.farmId)?.name ??
+              'Your farm'}
+          </Label>
+          <Label style={{ fontSize: 11, color: colors.muted }}>
+            {data.flock
+              ? `Day ${flockDay(data.flock, now)} · ${data.flock.birds.toLocaleString()} birds`
+              : 'No active flock'}
+          </Label>
         </View>
-        <IconButton icon={Bell} label={en.nav.Alerts} onPress={onAlerts} />
         <Pressable
-          testID="preview-settings"
+          testID="account-menu"
           accessibilityRole="button"
-          accessibilityLabel={en.previewSettings}
-          onPress={onPreview}
-          style={appStyles.avatar}
+          accessibilityLabel="Your account"
+          onPress={onAccount}
+          style={{ minHeight: 44, justifyContent: 'center', gap: 3 }}
         >
-          <Label weight="bold" style={{ fontSize: 13, color: colors.green }}>
-            {en.role[context.role].slice(0, 1)}
+          <Chip tone="muted">SAMPLE READINGS</Chip>
+          <Label weight="medium" style={{ fontSize: 11, color: colors.green, textAlign: 'right' }}>
+            {en.role[context.role]} · Account
           </Label>
         </Pressable>
       </View>
-      <View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap', gap: 4 }]}>
-        <Pressable
-          testID="connection-status"
-          accessibilityRole="button"
-          onPress={onPreview}
-          style={[styles.row, { minHeight: 44, gap: 6 }]}
-        >
-          <ConnectionIcon size={14} color={connectionColor} />
-          <Label style={{ fontSize: 11, color: connectionColor }}>
-            {en.connection[context.connection]}
-          </Label>
-        </Pressable>
-        <Chip tone="muted">{en.preview}</Chip>
-      </View>
-      {context.connection !== 'local' && (
-        <Label
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.amber, fontSize: 11, paddingBottom: 6 }}
-        >
-          {en.connectionHelp[context.connection]} · {en.readingsAsOf}:{' '}
-          {relativeTime(snapshot.sampledAt, now)}
-        </Label>
-      )}
+      <Label
+        testID="connection-status"
+        accessibilityLiveRegion="polite"
+        style={{ fontSize: 11, color: connected ? colors.muted : colors.amber }}
+      >
+        {syncing
+          ? 'Syncing with farm server…'
+          : connected
+            ? `${auth.activeConnection === 'hub' ? 'Farm hub' : 'Cloud'} - synced ${relativeTime(lastSyncedAt, now).toLowerCase()}`
+            : 'Server unavailable · saved data'}
+        {pendingCount ? ` · ${pendingCount} note(s) waiting` : ''}
+      </Label>
     </View>
   );
 }
-
-function AppContent() {
-  const [preview, setPreview] = useState(false);
-  const { toast, ready, started, loadError, retryLoad } = useFarm();
-  const insets = useSafeAreaInsets();
+const components = {
+  Dashboard: DashboardScreen,
+  Alerts: AlertsScreen,
+  'Heat Map': HeatMapScreen,
+  Analytics: AnalyticsScreen,
+  Devices: DevicesScreen,
+  Notes: NotesScreen,
+};
+function FarmApp() {
+  const { toast, ready, loadError, retryLoad, context, data } = useFarm(),
+    auth = useAuth(),
+    insets = useSafeAreaInsets();
+  const [account, setAccount] = useState(false);
   if (!ready) return <Loading />;
   if (loadError)
     return (
       <View style={{ flex: 1, padding: 28, justifyContent: 'center', gap: 20 }}>
-        <Label weight="bold">Could not open saved farm data</Label>
+        <Label weight="bold">Could not open your farm</Label>
         <Label>{loadError}</Label>
-        <Label>Your saved data has been kept. Try opening it again.</Label>
-        <Button onPress={retryLoad}>Try again</Button>
+        <Button onPress={() => void retryLoad()}>Try again</Button>
+        <Button variant="ghost" onPress={() => void auth.logout()}>
+          Sign out
+        </Button>
       </View>
     );
+  const deviceProgress = deviceSetupProgress(data.site, data.deviceSimulation);
+  const houseActivated = ['normal_monitor', 'normal_control'].includes(data.site.status);
+  if (context.role !== 'technician' && (!deviceProgress.ready || !houseActivated)) {
+    const farm = auth.record!.session.farms.find((item) => item.id === auth.record!.farmId)!;
+    const steps = [
+      { label: 'Technician survey completed', done: !!data.site.survey },
+      {
+        label: 'Farm hub paired and reporting',
+        done: data.deviceSimulation.hub?.status === 'reporting',
+      },
+      {
+        label: `${deviceProgress.requiredNodes} planned node(s) paired`,
+        done:
+          deviceProgress.requiredNodes > 0 &&
+          deviceProgress.reportingNodes >= deviceProgress.requiredNodes,
+      },
+      { label: 'Installation commissioned and activated', done: houseActivated },
+    ];
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          paddingTop: insets.top + 18,
+          paddingHorizontal: 18,
+          paddingBottom: insets.bottom + 18,
+        }}
+      >
+        <View style={{ width: '100%', maxWidth: 620, alignSelf: 'center', gap: 18 }}>
+          <View style={[styles.row, { justifyContent: 'space-between' }]}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <Label weight="bold" style={{ fontSize: 21 }}>
+                {farm.name}
+              </Label>
+              <Label style={{ color: colors.muted }}>Farm ID {farm.code}</Label>
+            </View>
+            <Button compact variant="secondary" onPress={() => setAccount(true)}>
+              Account
+            </Button>
+          </View>
+          <Card style={{ gap: 12, padding: 20 }}>
+            <Chip tone="amber">SETUP IN PROGRESS</Chip>
+            <Label weight="bold" style={{ fontSize: 22, lineHeight: 29 }}>
+              CoopGuard is being prepared for this house
+            </Label>
+            <Label>
+              Your monitoring, trends, alerts and equipment functions will appear after the
+              technician completes the survey, pairs the planned hub and nodes, and activates the
+              installation.
+            </Label>
+            {steps.map((step) => (
+              <View key={step.label} style={styles.row}>
+                <CheckCircle2 size={19} color={step.done ? colors.green : colors.muted} />
+                <Label style={{ flex: 1, color: step.done ? colors.ink : colors.muted }}>
+                  {step.label}
+                </Label>
+              </View>
+            ))}
+          </Card>
+        </View>
+        <AccountSheet visible={account} onClose={() => setAccount(false)} />
+      </View>
+    );
+  }
   return (
     <View style={{ flex: 1 }}>
-      {!started ? (
-        <OnboardingScreen />
-      ) : (
-        <NavigationContainer
-          theme={{
-            ...DefaultTheme,
-            colors: {
-              ...DefaultTheme.colors,
-              background: colors.background,
-              card: colors.surface,
-              primary: colors.green,
-              text: colors.ink,
-              border: colors.border,
-            },
-            fonts: {
-              regular: { fontFamily: fonts.regular, fontWeight: '400' },
-              medium: { fontFamily: fonts.medium, fontWeight: '500' },
-              bold: { fontFamily: fonts.bold, fontWeight: '700' },
-              heavy: { fontFamily: fonts.bold, fontWeight: '700' },
-            },
+      <NavigationContainer
+        theme={{
+          ...DefaultTheme,
+          colors: {
+            ...DefaultTheme.colors,
+            background: colors.background,
+            card: colors.surface,
+            primary: colors.green,
+            text: colors.ink,
+            border: colors.border,
+          },
+          fonts: {
+            regular: { fontFamily: fonts.regular, fontWeight: '400' },
+            medium: { fontFamily: fonts.medium, fontWeight: '500' },
+            bold: { fontFamily: fonts.bold, fontWeight: '700' },
+            heavy: { fontFamily: fonts.bold, fontWeight: '700' },
+          },
+        }}
+      >
+        <Tabs.Navigator
+          tabBar={(props) => <Navigation {...props} />}
+          screenOptions={{
+            tabBarPosition: 'bottom',
+            animation: 'none',
+            header: () => <Header onAccount={() => setAccount(true)} />,
+            sceneStyle: { backgroundColor: colors.background },
           }}
         >
-          <Tabs.Navigator
-            tabBar={(props) => <Navigation {...props} />}
-            screenOptions={({ navigation }) => ({
-              tabBarPosition: 'bottom',
-              animation: 'none',
-              header: () => (
-                <AppHeader
-                  onPreview={() => setPreview(true)}
-                  onAlerts={() => navigation.navigate('Alerts')}
-                />
-              ),
-              sceneStyle: { backgroundColor: colors.background },
-            })}
-          >
-            <Tabs.Screen name="Dashboard" component={DashboardScreen} />
-            <Tabs.Screen name="Alerts" component={AlertsScreen} />
-            <Tabs.Screen name="Heat Map" component={HeatMapScreen} />
-            <Tabs.Screen name="Analytics" component={AnalyticsScreen} />
-            <Tabs.Screen name="Devices" component={DevicesScreen} />
-          </Tabs.Navigator>
-        </NavigationContainer>
-      )}
-      <PreviewSheet visible={preview} onClose={() => setPreview(false)} />
+          {roleTabs[context.role].map((name) => (
+            <Tabs.Screen key={name} name={name} component={components[name]} />
+          ))}
+        </Tabs.Navigator>
+      </NavigationContainer>
+      <AccountSheet visible={account} onClose={() => setAccount(false)} />
       {toast && (
         <View
           pointerEvents="none"
@@ -263,7 +337,33 @@ function AppContent() {
     </View>
   );
 }
-
+function SessionGate() {
+  const auth = useAuth();
+  if (!auth.ready) return <Loading />;
+  if (!auth.record || auth.record.session.account.mustChangePassword) return <LoginScreen />;
+  const r = auth.record;
+  if (r.session.account.role === 'admin') return <AdminScreen />;
+  if (r.session.account.role === 'technician')
+    return <TechnicianSession key={`${r.session.account.id}:${r.session.token}`} />;
+  return (
+    <FarmProvider
+      key={`${auth.server}:${r.session.account.id}:${r.farmId}:${r.session.account.role}`}
+    >
+      <FarmApp />
+    </FarmProvider>
+  );
+}
+function TechnicianSession() {
+  const auth = useAuth();
+  const [selected, setSelected] = useState(false);
+  const r = auth.record!;
+  if (!selected) return <TechnicianFarmSelector onSelected={() => setSelected(true)} />;
+  return (
+    <FarmProvider key={`${auth.server}:${r.session.account.id}:${r.farmId}:technician`}>
+      <FarmApp />
+    </FarmProvider>
+  );
+}
 function Loading() {
   return (
     <View
@@ -278,62 +378,15 @@ function Loading() {
     </View>
   );
 }
-
 export default function App() {
   const [loaded, error] = useFonts({ DMSans_400Regular, DMSans_500Medium, DMSans_700Bold });
   if (!loaded && !error) return <Loading />;
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      <FarmProvider>
-        <AppContent />
-      </FarmProvider>
+      <AuthProvider>
+        <SessionGate />
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }
-
-const appStyles = StyleSheet.create({
-  bottomNav: {
-    backgroundColor: colors.surface,
-    borderTopWidth: 1,
-    borderColor: colors.border,
-    paddingTop: 8,
-    flexDirection: 'row',
-  },
-  bottomLink: {
-    flex: 1,
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 3,
-  },
-  notificationDot: {
-    position: 'absolute',
-    right: -3,
-    top: -2,
-    width: 7,
-    height: 7,
-    backgroundColor: colors.amber,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: '#fff',
-  },
-  houseIcon: {
-    width: 38,
-    height: 38,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatar: {
-    minWidth: 44,
-    minHeight: 44,
-    borderRadius: 22,
-    backgroundColor: colors.greenSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

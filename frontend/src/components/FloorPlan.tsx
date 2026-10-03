@@ -37,11 +37,13 @@ export function FloorPlan({
               {!compact && (
                 <Chip
                   tone={
-                    summary.condition === 'watch'
-                      ? 'amber'
-                      : summary.condition === 'unavailable'
-                        ? 'muted'
-                        : 'green'
+                    summary.condition === 'urgent'
+                      ? 'red'
+                      : summary.condition === 'watch'
+                        ? 'amber'
+                        : summary.condition === 'unavailable'
+                          ? 'muted'
+                          : 'green'
                   }
                 >
                   {summary.condition === 'unavailable'
@@ -87,7 +89,23 @@ export function FloorPlan({
           ))}
         </Svg>
         {sensors.map((sensor) => {
-          const watching = sensor.conditions[metric] === 'watch';
+          const condition = sensor.online ? sensor.conditions[metric] : 'unavailable';
+          const color =
+            condition === 'urgent'
+              ? colors.red
+              : condition === 'watch'
+                ? colors.amber
+                : condition === 'good'
+                  ? colors.green
+                  : colors.muted;
+          const fill =
+            condition === 'urgent'
+              ? colors.redSoft
+              : condition === 'watch'
+                ? colors.amberSoft
+                : condition === 'good'
+                  ? colors.greenSoft
+                  : '#F6F7F2';
           return (
             <Pressable
               key={sensor.id}
@@ -118,8 +136,8 @@ export function FloorPlan({
                   borderRadius: 20,
                   borderWidth: 1.5,
                   borderStyle: sensor.online ? 'solid' : 'dashed',
-                  borderColor: sensor.online ? (watching ? '#DDA854' : '#5C8A59') : '#A3ABA0',
-                  backgroundColor: sensor.online ? (watching ? '#F2D499' : '#D8E7CD') : '#F6F7F2',
+                  borderColor: color,
+                  backgroundColor: fill,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -129,11 +147,7 @@ export function FloorPlan({
                     width: 8,
                     height: 8,
                     borderRadius: 5,
-                    backgroundColor: sensor.online
-                      ? watching
-                        ? colors.amber
-                        : colors.green
-                      : colors.muted,
+                    backgroundColor: color,
                   }}
                 />
               </View>
@@ -142,7 +156,7 @@ export function FloorPlan({
                 style={{
                   fontSize: small ? 10 : 12,
                   lineHeight: 15,
-                  color: sensor.online ? (watching ? colors.amber : colors.green) : colors.muted,
+                  color,
                 }}
               >
                 {sensor.online
@@ -153,13 +167,26 @@ export function FloorPlan({
           );
         })}
       </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 18, marginTop: 16 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+          gap: 12,
+          marginTop: 16,
+        }}
+      >
         <Chip tone="green" dot>
           {en.statuses.good}
         </Chip>
         <Chip tone="amber" dot>
           {en.statuses.watch}
         </Chip>
+        {sensors.some((s) => s.online && s.conditions[metric] === 'urgent') && (
+          <Chip tone="red" dot>
+            {en.statuses.urgent}
+          </Chip>
+        )}
         <Chip tone="muted" dot>
           {en.statuses.unavailable}
         </Chip>

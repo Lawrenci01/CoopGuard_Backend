@@ -2,30 +2,35 @@
 
 Offline-first poultry-house monitoring and climate-control pilot. This is one Git repository with four components:
 
-| Folder | Responsibility |
-| --- | --- |
-| `frontend/` | React Native mobile app |
-| `backend/` | Node.js/TypeScript hub API, CRUD, ordinary rules, local database, and cloud sync |
-| `ai/` | Python AI training, evaluation, and hub inference |
-| `hardware/` | ESP32 node firmware and hub LoRa gateway |
+| Folder      | Responsibility                                                                   |
+| ----------- | -------------------------------------------------------------------------------- |
+| `frontend/` | React Native mobile app                                                          |
+| `backend/`  | Node.js/TypeScript hub API, CRUD, ordinary rules, local database, and cloud sync |
+| `ai/`       | Python AI training, evaluation, and hub inference                                |
+| `hardware/` | ESP32 node firmware and hub LoRa gateway                                         |
 
 The components share one repository so changes to their interfaces can be reviewed together.
 
 ## Android mobile app
 
-The frontend is a native React Native/TypeScript app with persistent local features and dummy farm data. Build the standalone Android APK to run on a phone without Expo Go, a PC connection, or internet.
+The native React Native/TypeScript app now has real shared username/password accounts, role-specific screens, offline cached records, inspection-note synchronization, automatic paired-hub/cloud selection, and a technician workflow from site survey through installation, commissioning, monitoring trial and activation. The Node.js/TypeScript backend is live on Render/Turso and has a Pi hub mode backed by a synchronized local database. Sensor readings and equipment responses are still dummy data.
 
 ```powershell
-cd frontend
+cd backend
 npm ci
+npm run tls
+cd ../frontend
+npm ci
+$env:EXPO_PUBLIC_API_URL = 'https://YOUR-RENDER-SERVICE.onrender.com'
 npm run build:android
 ```
 
-Install `frontend/dist/android/CoopGuard.apk`. See the [frontend guide](frontend/README.md) for Android build prerequisites, house setup, saved sensor changes, flock cycles, inspection notes, checks, and integration boundaries. Real readings, equipment, cloud sync, and AI inference still require their services.
+Install `frontend/dist/android/CoopGuard.apk`, then sign in with a provisioned account. The team creates owners/technicians; owners create only workers. Render works through any internet connection; a commissioned hub works over farm WiFi without internet; a phone with neither uses bounded cached access. See the [frontend guide](frontend/README.md) for installation, roles, old-phone-record import and offline behavior. Real readings, equipment, physical Pi commissioning and AI inference still require their services.
 
 ## Working documents
 
 - [Current plan](docs/CURRENT_PLAN.md) — current decisions, safety boundaries, pilot gates, and open items.
+- [Accounts and roles](docs/ACCOUNTS_AND_ROLES.md) — authority, role screens, real credentials and offline session policy.
 - [Edge AI and JavaScript replan](docs/EDGE_AI_REPLAN.md) — both AI tracks, data collection, recommended hub inference, and component language ownership.
 - [End-to-end interface contract](docs/INTERFACE_CONTRACT.md) — how a reading, control action, alert, and remote request cross components.
 - [Site survey checklist](docs/SITE_SURVEY_CHECKLIST.md) — information required before hardware and control decisions.

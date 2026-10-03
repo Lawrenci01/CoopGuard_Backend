@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Share, TextInput, View } from 'react-native';
-import type { Role, Section, Sensor } from '../domain/types';
+import type { Section, Sensor } from '../domain/types';
 import { colors, fonts } from '../theme';
 import { dateText, flockDay, type Inspection } from '../services/localFarmRepository';
 import { useFarm } from '../state/FarmProvider';
 import { Button, Card, Choice, Label, SectionTitle, Sheet } from './ui';
-import { en, relativeTime } from '../i18n/en';
+import { relativeTime } from '../i18n/en';
+import { useAuth } from '../state/AuthProvider';
 
 export function Field({
   label,
@@ -46,26 +47,30 @@ export function Field({
   );
 }
 
-export function FlockManager() {
+export function FlockManager({ nextStep = false }: { nextStep?: boolean }) {
   const { data, now, context, perform } = useFarm();
   const [open, setOpen] = useState(false),
     [ending, setEnding] = useState(false),
     [busy, setBusy] = useState(false);
   const [startDate, setDate] = useState(dateText()),
     [days, setDays] = useState('42'),
-    [birds, setBirds] = useState('1000');
-  const manager = context.role !== 'worker';
+    [birds, setBirds] = useState('');
+  const manager = context.role === 'owner';
   return (
     <Card style={{ gap: 12 }}>
-      <SectionTitle title="Flock cycle" />
+      <Label weight="bold" style={{ fontSize: 18 }}>
+        {nextStep ? 'House saved. Add your flock' : 'Flock cycle'}
+      </Label>
       <Label>
         {data.flock
           ? `Day ${flockDay(data.flock, now)} of ${data.flock.days} · ${data.flock.birds.toLocaleString()} birds`
-          : 'No active flock'}
+          : nextStep
+            ? 'Enter the start date and bird count to begin tracking this cycle.'
+            : 'No active flock'}
       </Label>
       {data.flock && <Label>Started {data.flock.startDate}</Label>}
-      <Button variant="secondary" onPress={() => setOpen(true)}>
-        Manage flock
+      <Button testID="open-flock" variant="secondary" onPress={() => setOpen(true)}>
+        {nextStep ? 'Add flock details' : 'Manage flock'}
       </Button>
       <Sheet
         visible={open}
@@ -76,7 +81,7 @@ export function FlockManager() {
         }}
       >
         <View style={{ gap: 18 }}>
-          {!manager && <Label>Owners and technicians manage flock cycles.</Label>}
+          {!manager && <Label>The farm owner manages flock cycles.</Label>}
           {data.flock ? (
             <>
               <Label weight="bold">
@@ -141,8 +146,7 @@ export function FlockManager() {
               </Button>
             </>
           )}
-          <SectionTitle title="Completed cycles" />
-          {!data.pastFlocks.length && <Label>No completed cycles yet.</Label>}
+          {data.pastFlocks.length > 0 && <SectionTitle title="Completed cycles" />}
           {data.pastFlocks.map((flock) => (
             <Card key={flock.id} style={{ gap: 6 }}>
               <Label weight="bold">
@@ -160,6 +164,7 @@ export function FlockManager() {
 }
 
 export function InspectionNotes({ kind }: { kind: Inspection['kind'] }) {
+  const auth = useAuth();
   const { data, perform, now, notify } = useFarm();
   const [text, setText] = useState(''),
     [editing, setEditing] = useState<string | undefined>(),
@@ -224,21 +229,31 @@ export function InspectionNotes({ kind }: { kind: Inspection['kind'] }) {
         <Card key={note.id} style={{ gap: 10 }}>
           <Label style={{ color: colors.muted }}>{relativeTime(note.createdAt, now)}</Label>
           <Label>{note.text}</Label>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            <Button
-              compact
-              variant="secondary"
-              onPress={() => {
-                setText(note.text);
-                setEditing(note.id);
-              }}
-            >
-              Edit note
-            </Button>
-            <Button compact variant="ghost" onPress={() => setDeleting(note.id)}>
-              Delete note
-            </Button>
-          </View>
+          {note.pending && (
+            <Label style={{ color: colors.amber }}>Saved on this phone · waiting to sync</Label>
+          )}
+          {!!note.authorName && (
+            <Label style={{ fontSize: 12, color: colors.muted }}>{note.authorName}</Label>
+          )}
+          {!note.pending &&
+            (auth.record?.session.account.role === 'owner' ||
+              note.authorId === auth.record?.session.account.id) && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                <Button
+                  compact
+                  variant="secondary"
+                  onPress={() => {
+                    setText(note.text);
+                    setEditing(note.id);
+                  }}
+                >
+                  Edit note
+                </Button>
+                <Button compact variant="ghost" onPress={() => setDeleting(note.id)}>
+                  Delete note
+                </Button>
+              </View>
+            )}
           {deleting === note.id && (
             <>
               <Label>Delete this saved note?</Label>
@@ -263,105 +278,6 @@ export function InspectionNotes({ kind }: { kind: Inspection['kind'] }) {
           )}
         </Card>
       ))}
-    </View>
-  );
-}
-
-export function TeamManager() {
-  const { data, context, perform } = useFarm();
-  const [name, setName] = useState(''),
-    [role, setRole] = useState<Role>('worker'),
-    [editing, setEditing] = useState<string | undefined>(),
-    [deleting, setDeleting] = useState<string | null>(null),
-    [busy, setBusy] = useState(false);
-  const allowed = context.role === 'owner';
-  return (
-    <View style={{ gap: 16 }}>
-      <Label>Local team directory. These profiles do not create hub accounts or passwords.</Label>
-      {data.people.map((person) => (
-        <Card key={person.id} style={{ gap: 10 }}>
-          <Label weight="bold">
-            {person.name} · {en.role[person.role]}
-          </Label>
-          {allowed && (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <Button
-                compact
-                variant="secondary"
-                onPress={() => {
-                  setName(person.name);
-                  setRole(person.role);
-                  setEditing(person.id);
-                }}
-              >
-                Edit
-              </Button>
-              <Button compact variant="ghost" onPress={() => setDeleting(person.id)}>
-                Remove
-              </Button>
-            </View>
-          )}
-          {deleting === person.id && (
-            <>
-              <Label>Remove {person.name} from this phone’s team directory?</Label>
-              <Button
-                variant="danger"
-                onPress={async () => {
-                  if (await perform({ type: 'deletePerson', id: person.id }, 'Person removed.')) {
-                    setDeleting(null);
-                    if (editing === person.id) {
-                      setEditing(undefined);
-                      setName('');
-                    }
-                  }
-                }}
-              >
-                Confirm removal
-              </Button>
-              <Button variant="ghost" onPress={() => setDeleting(null)}>
-                Keep person
-              </Button>
-            </>
-          )}
-        </Card>
-      ))}
-      {allowed && (
-        <>
-          <Field label="Team member name" value={name} onChange={setName} />
-          <Choice
-            values={['owner', 'worker', 'technician']}
-            selected={role}
-            labels={en.role}
-            onSelect={setRole}
-          />
-          <Button
-            disabled={busy}
-            onPress={async () => {
-              setBusy(true);
-              if (
-                await perform({ type: 'savePerson', id: editing, name, role }, 'Team member saved.')
-              ) {
-                setName('');
-                setEditing(undefined);
-              }
-              setBusy(false);
-            }}
-          >
-            {editing ? 'Save person' : 'Add person'}
-          </Button>
-          {editing && (
-            <Button
-              variant="ghost"
-              onPress={() => {
-                setEditing(undefined);
-                setName('');
-              }}
-            >
-              Cancel edit
-            </Button>
-          )}
-        </>
-      )}
     </View>
   );
 }
@@ -446,12 +362,49 @@ export function Maintenance({ mode }: { mode: 'calibration' | 'diagnostics' | 's
   const { data, snapshot, context, perform, now } = useFarm();
   if (mode === 'software')
     return (
-      <View style={{ gap: 12 }}>
-        <Label weight="bold">CoopGuard 0.1.0 · local sample data</Label>
-        <Label>
-          This installation includes the app code and fonts. Hardware firmware updates will appear
-          after real devices are connected.
+      <View style={{ gap: 14 }}>
+        <Label weight="bold">Simulated device firmware</Label>
+        <Label style={{ color: colors.muted }}>
+          Firmware actions update saved simulator state only. They do not install software on
+          physical hardware.
         </Label>
+        {[
+          ...(data.deviceSimulation.hub ? [data.deviceSimulation.hub] : []),
+          ...data.deviceSimulation.nodes,
+        ].map((device) => (
+          <Card key={device.id} style={{ gap: 8 }}>
+            <Label weight="bold">{device.id}</Label>
+            <Label>
+              {device.status} · firmware {device.firmwareVersion ?? '0.1.0-sim'}
+            </Label>
+            {device.firmwareUpdatedAt && (
+              <Label style={{ color: colors.muted }}>
+                Updated {relativeTime(device.firmwareUpdatedAt, now)}
+              </Label>
+            )}
+            <Button
+              variant="secondary"
+              disabled={context.role !== 'technician' || device.status !== 'reporting'}
+              onPress={() =>
+                void perform(
+                  { type: 'updateVirtualFirmware', id: device.id },
+                  'Simulated firmware update saved.',
+                )
+              }
+            >
+              Simulate firmware update
+            </Button>
+          </Card>
+        ))}
+        {!data.deviceSimulation.hub && !data.deviceSimulation.nodes.length && (
+          <Label>No farm devices have been created yet.</Label>
+        )}
+        <Label weight="bold">Recent device history</Label>
+        {data.deviceSimulation.history.slice(0, 8).map((event) => (
+          <Label key={event.id} style={{ color: colors.muted }}>
+            {event.deviceId} · {event.details} · {relativeTime(event.createdAt, now)}
+          </Label>
+        ))}
       </View>
     );
   if (mode === 'diagnostics')
@@ -459,23 +412,28 @@ export function Maintenance({ mode }: { mode: 'calibration' | 'diagnostics' | 's
       <View style={{ gap: 12 }}>
         <Label weight="bold">Local data store: available</Label>
         <Label>
-          {snapshot.sensors.filter((s) => s.online).length} of {snapshot.sensors.length} sample
-          sensors reporting
+          {snapshot.sensors.filter((s) => s.online).length} of {snapshot.sensors.length} nodes
+          reporting
         </Label>
         <Label>
           {snapshot.alerts.filter((a) => a.status !== 'resolved').length} unresolved sample alerts
         </Label>
+        <Label>Sound analysis: coming soon while the hub AI model is being trained.</Label>
         <Label>
-          AI:{' '}
-          {data.aiState === 'collecting'
-            ? 'awaiting pilot data and a trained model'
-            : 'service unavailable'}
+          Hub: {data.deviceSimulation.hub?.status ?? 'not created'}
+          {data.deviceSimulation.hub ? ` · ${data.deviceSimulation.hub.id}` : ''}
         </Label>
-        <Label>Hardware connection: no physical hub paired</Label>
+        <Label>
+          {data.deviceSimulation.nodes.filter((node) => node.status === 'reporting').length} of{' '}
+          {data.deviceSimulation.nodes.length} virtual nodes reporting
+        </Label>
+        <Label>
+          {data.deviceSimulation.history.length} simulated maintenance event(s) recorded
+        </Label>
         <Label>{data.retired.length} retired sensor records retained</Label>
         {data.retired.map((s) => (
           <Label key={s.id}>
-            Sensor {s.number} · Section {s.section} · last temperature{' '}
+            Node {s.number} · Section {s.section} · last temperature{' '}
             {s.readings.temperature.toFixed(1)} °C
           </Label>
         ))}
@@ -484,27 +442,29 @@ export function Maintenance({ mode }: { mode: 'calibration' | 'diagnostics' | 's
   return (
     <View style={{ gap: 14 }}>
       <Label>
-        Record a sample accuracy check. Real calibration needs the approved technician procedure and
-        hardware.
+        Record a simulated calibration for a reporting node. Physical calibration still requires the
+        approved technician procedure and hardware.
       </Label>
       {snapshot.sensors.map((sensor) => (
         <Card key={sensor.id} style={{ gap: 8 }}>
-          <Label weight="bold">Sensor {sensor.number}</Label>
+          <Label weight="bold">Node {sensor.number}</Label>
           <Label>
             {data.calibration[sensor.id]
-              ? `Sample check ${relativeTime(data.calibration[sensor.id]!, now)}`
-              : 'No sample check recorded'}
+              ? `Simulated calibration ${relativeTime(data.calibration[sensor.id]!, now)}`
+              : 'No calibration recorded'}
           </Label>
           <Button
             variant="secondary"
             disabled={
-              context.role !== 'technician' || context.connection !== 'local' || !sensor.online
+              context.role !== 'technician' ||
+              (!data.site.survey && context.connection !== 'local') ||
+              !sensor.online
             }
             onPress={() =>
-              perform({ type: 'calibrate', id: sensor.id }, 'Sample accuracy check saved.')
+              perform({ type: 'calibrate', id: sensor.id }, 'Simulated calibration saved.')
             }
           >
-            Record sample check
+            Record simulated calibration
           </Button>
         </Card>
       ))}

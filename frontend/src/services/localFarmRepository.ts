@@ -2,8 +2,35 @@ import { createDemoSnapshot } from '../data/fixtures';
 import { surveyRecommendation, validSurvey, type HouseSurveyDraft } from '../domain/setup';
 import { canManageSensors } from '../domain/policy';
 import type { FarmSnapshot, PreviewContext, Role, Section, Sensor } from '../domain/types';
+import {
+  buildInstallationPlan,
+  checklistComplete,
+  commissioningChecks,
+  emptySiteWorkflow,
+  installationChecks,
+  trialChecks,
+  validSiteSurvey,
+  validSiteWorkflow,
+  workflowFromLegacyHouse,
+  workflowFromSurvey,
+  type ChecklistValue,
+  type CommissioningCheck,
+  type InstallationCheck,
+  type SiteSurvey,
+  type SiteWorkflow,
+  type TrialCheck,
+} from '../domain/siteWorkflow';
 import { DemoFarmService } from './demoFarmService';
 import { cacheSnapshot, validSnapshot, type KeyValueStorage } from './snapshotCache';
+import {
+  deviceSetupProgress,
+  emptyDeviceSimulation,
+  parsePairingQr,
+  recordDeviceEvent,
+  snapshotForDeviceSimulation,
+  validDeviceSimulation,
+  type DeviceSimulation,
+} from '../domain/deviceSimulation';
 
 export const LOCAL_FARM_KEY = 'coopguard.localFarm.v1';
 export interface FlockCycle {
@@ -15,6 +42,9 @@ export interface FlockCycle {
   alertCount?: number;
 }
 export interface Inspection {
+  pending?: boolean;
+  authorId?: string;
+  authorName?: string;
   id: string;
   kind: 'environment' | 'sound';
   text: string;
@@ -26,6 +56,7 @@ export interface LocalFarmState {
   snapshot: FarmSnapshot;
   context: PreviewContext;
   house: HouseSurveyDraft | null;
+  site: SiteWorkflow;
   notifications: boolean;
   aiState: 'collecting' | 'unavailable';
   flock: FlockCycle | null;
@@ -34,13 +65,44 @@ export interface LocalFarmState {
   people: { id: string; name: string; role: Role }[];
   retired: Sensor[];
   calibration: Record<string, number>;
+  deviceSimulation: DeviceSimulation;
 }
 export type LocalAction =
-  | { type: 'start' | 'welcome' | 'tick' | 'refresh' | 'reconnect' | 'fullPower' | 'endFlock' }
+  | {
+      type:
+        | 'start'
+        | 'welcome'
+        | 'restore'
+        | 'tick'
+        | 'refresh'
+        | 'reconnect'
+        | 'fullPower'
+        | 'endFlock';
+    }
   | { type: 'context'; patch: Partial<PreviewContext> }
   | { type: 'ai'; value: LocalFarmState['aiState'] }
   | { type: 'notifications'; value: boolean }
-  | { type: 'house'; value: HouseSurveyDraft }
+  | { type: 'house'; value: HouseSurveyDraft; open?: boolean }
+  | { type: 'saveSiteSurvey'; value: SiteSurvey }
+  | {
+      type: 'approveSitePlan' | 'startInstallation' | 'beginCommissioning' | 'startMonitoringTrial';
+    }
+  | {
+      type: 'siteChecklist';
+      stage: 'installation' | 'commissioning' | 'trial';
+      key: InstallationCheck | CommissioningCheck | TrialCheck;
+      value: ChecklistValue;
+    }
+  | { type: 'activateSite'; mode: 'monitor' | 'full' }
+  | { type: 'createVirtualHub'; farmCode: string }
+  | {
+      type: 'createVirtualNode';
+      farmCode: string;
+      section: Section;
+    }
+  | { type: 'pairVirtualDevice'; qr: string }
+  | { type: 'removeVirtualDevice'; id: string }
+  | { type: 'updateVirtualFirmware'; id: string }
   | { type: 'ack'; id: string }
   | { type: 'addSensor'; section: Section; control: boolean; tested: boolean; calibrated: boolean }
   | { type: 'moveSensor'; id: string; section: Section; x: number; y: number }
@@ -70,6 +132,7 @@ export function seedLocalFarm(now = Date.now()): LocalFarmState {
     snapshot: createDemoSnapshot(now),
     context: { connection: 'local', role: 'owner', controlMode: 'full' },
     house: null,
+    site: emptySiteWorkflow(now),
     notifications: true,
     aiState: 'collecting',
     flock: { id: 'flock-1', startDate: dateText(now - 17 * 86_400_000), days: 42, birds: 1000 },
@@ -77,6 +140,7 @@ export function seedLocalFarm(now = Date.now()): LocalFarmState {
     inspections: [],
     retired: [],
     calibration: {},
+    deviceSimulation: emptyDeviceSimulation(),
     people: [{ id: 'owner', name: 'Farm owner', role: 'owner' }],
   };
 }
@@ -120,6 +184,10 @@ export function validLocalFarm(value: unknown): value is LocalFarmState {
     )
       return false;
     if (s.house !== null && !validSurvey(s.house)) return false;
+    if (!s.site) s.site = s.house ? workflowFromLegacyHouse(s.house) : emptySiteWorkflow();
+    if (!s.deviceSimulation) s.deviceSimulation = emptyDeviceSimulation();
+    if (!validSiteWorkflow(s.site)) return false;
+    if (!validDeviceSimulation(s.deviceSimulation)) return false;
     if (typeof s.notifications !== 'boolean' || !['collecting', 'unavailable'].includes(s.aiState))
       return false;
     const request = s.snapshot.request;
@@ -207,7 +275,7 @@ export class LocalFarmRepository {
         throw new Error('Saved farm data could not be read. It has not been overwritten.');
       this.state = saved;
     }
-    return this.dispatch({ type: 'tick' });
+    return this.dispatch({ type: 'restore' });
   }
   dispatch(action: LocalAction): Promise<LocalFarmState> {
     const result = this.queue.then(async () => {
@@ -240,6 +308,10 @@ export class LocalFarmRepository {
       if (!canManageSensors(s.context))
         throw new Error('Choose Technician and At the farm in Sample settings.');
     };
+    const requireTechnicianRole = () => {
+      if (s.context.role !== 'technician')
+        throw new Error('Only a technician can complete this work.');
+    };
     switch (a.type) {
       case 'start':
         s.started = true;
@@ -261,17 +333,230 @@ export class LocalFarmRepository {
       case 'house':
         requireManager();
         if (!validSurvey(a.value)) throw new Error('Check the house details.');
+        // The example flock must not become the user's first flock by implication.
+        if (!s.house && s.flock?.id === 'flock-1') s.flock = null;
         s.house = a.value;
+        s.site = workflowFromLegacyHouse(a.value, now);
+        if (a.open) s.started = true;
         s.context.controlMode = surveyRecommendation(a.value) === 'eligible' ? 'full' : 'monitor';
         if (s.context.controlMode === 'monitor') {
           s.snapshot.request = null;
           s.snapshot.fanStage = 'high';
         }
         break;
+      case 'saveSiteSurvey': {
+        requireTechnicianRole();
+        if (!validSiteSurvey(a.value)) throw new Error('Complete the required survey questions.');
+        const survey = { ...a.value, completedAt: now };
+        s.site = workflowFromSurvey(survey, now);
+        s.house = {
+          farmName: survey.farm.farmName,
+          houseName: survey.farm.houseName,
+          houseType:
+            survey.house.type === 'open' || survey.house.type === 'tunnel'
+              ? survey.house.type
+              : 'unknown',
+          controller: survey.controller.status,
+          flock:
+            survey.flock.type === 'broiler' || survey.flock.type === 'layer'
+              ? survey.flock.type
+              : 'unknown',
+          lengthMetres: survey.house.lengthMetres,
+          widthMetres: survey.house.widthMetres,
+        };
+        s.context.controlMode = 'monitor';
+        s.snapshot.request = null;
+        s.snapshot.fanStage = 'high';
+        break;
+      }
+      case 'approveSitePlan':
+        requireTechnicianRole();
+        if (s.site.status !== 'review_required' || !s.site.survey)
+          throw new Error('Complete the site survey before approving the plan.');
+        s.site.plan = buildInstallationPlan(s.site.survey, now);
+        if (s.site.plan.blockers.length)
+          throw new Error(`Resolve first: ${s.site.plan.blockers[0]}`);
+        s.site.status = 'approved_install';
+        s.site.updatedAt = now;
+        break;
+      case 'startInstallation':
+        requireTechnicianRole();
+        if (s.site.status !== 'approved_install')
+          throw new Error('Approve the installation plan first.');
+        s.site.status = 'installing';
+        s.site.updatedAt = now;
+        break;
+      case 'beginCommissioning':
+        requireTechnicianRole();
+        if (
+          s.site.status !== 'installing' ||
+          !checklistComplete(s.site.installation, installationChecks)
+        )
+          throw new Error('Complete every required installation check first.');
+        if (!deviceSetupProgress(s.site, s.deviceSimulation).ready)
+          throw new Error('Pair the planned virtual hub and nodes before commissioning.');
+        s.site.status = 'commissioning';
+        s.site.updatedAt = now;
+        break;
+      case 'startMonitoringTrial':
+        requireTechnicianRole();
+        if (
+          s.site.status !== 'commissioning' ||
+          !checklistComplete(s.site.commissioning, commissioningChecks)
+        )
+          throw new Error('Complete every required commissioning check first.');
+        s.site.status = 'monitoring_trial';
+        s.site.trialStartedAt = now;
+        s.site.updatedAt = now;
+        break;
+      case 'siteChecklist': {
+        requireTechnicianRole();
+        const definitions =
+          a.stage === 'installation'
+            ? installationChecks
+            : a.stage === 'commissioning'
+              ? commissioningChecks
+              : trialChecks;
+        const expectedStatus =
+          a.stage === 'installation'
+            ? 'installing'
+            : a.stage === 'commissioning'
+              ? 'commissioning'
+              : 'monitoring_trial';
+        if (s.site.status !== expectedStatus) throw new Error('This checklist is not active yet.');
+        const definition = definitions.find(([key]) => key === a.key);
+        if (!definition || (a.value === 'na' && !definition[2]))
+          throw new Error('Choose a valid checklist result.');
+        if (
+          a.value === 'na' &&
+          s.site.plan?.recommendedMode === 'full_candidate' &&
+          ['wiringCompleted', 'equipmentMapped', 'actuatorTests', 'fallbackTests'].includes(a.key)
+        )
+          throw new Error('A full-control candidate must pass this check; it cannot be N/A.');
+        (s.site[a.stage] as Record<string, ChecklistValue>)[a.key] = a.value;
+        s.site.updatedAt = now;
+        break;
+      }
+      case 'activateSite':
+        requireTechnicianRole();
+        if (s.site.status !== 'monitoring_trial' || !checklistComplete(s.site.trial, trialChecks))
+          throw new Error('Complete the monitoring trial checks first.');
+        if (!deviceSetupProgress(s.site, s.deviceSimulation).ready)
+          throw new Error('The planned hub and nodes must be paired and reporting.');
+        if (a.mode === 'full' && s.site.plan?.recommendedMode !== 'full_candidate')
+          throw new Error('This site is approved for monitor-only operation.');
+        s.site.status = a.mode === 'full' ? 'normal_control' : 'normal_monitor';
+        s.site.activatedMode = a.mode;
+        s.site.updatedAt = now;
+        s.context.controlMode = a.mode;
+        break;
+      case 'createVirtualHub': {
+        requireTechnicianRole();
+        if (!s.site.survey || !s.site.plan)
+          throw new Error('Complete the survey before creating the farm hub.');
+        if (s.deviceSimulation.hub?.status === 'reporting')
+          throw new Error('Remove the paired virtual hub before creating another one.');
+        const suffix = Math.random().toString(36).slice(2, 10).toUpperCase();
+        s.deviceSimulation.hub = {
+          id: `HUB-${suffix}`,
+          farmCode: a.farmCode,
+          pairingCode: Math.random().toString(36).slice(2, 14).toUpperCase().padEnd(12, '0'),
+          status: 'created',
+          createdAt: now,
+          firmwareVersion: '0.1.0-sim',
+        };
+        s.deviceSimulation.nodes = [];
+        break;
+      }
+      case 'createVirtualNode': {
+        requireTechnicianRole();
+        const hub = s.deviceSimulation.hub;
+        if (!hub || hub.status !== 'reporting')
+          throw new Error('Pair the virtual hub before creating nodes.');
+        if (!sections.includes(a.section)) throw new Error('Choose a valid house section.');
+        const suffix = Math.random().toString(36).slice(2, 10).toUpperCase();
+        s.deviceSimulation.nodes.push({
+          id: `NODE-${suffix}`,
+          farmCode: a.farmCode,
+          pairingCode: Math.random().toString(36).slice(2, 14).toUpperCase().padEnd(12, '0'),
+          section: a.section,
+          status: 'created',
+          createdAt: now,
+          firmwareVersion: '0.1.0-sim',
+        });
+        break;
+      }
+      case 'pairVirtualDevice': {
+        requireTechnicianRole();
+        const payload = parsePairingQr(a.qr);
+        if (payload.kind === 'hub') {
+          const hub = s.deviceSimulation.hub;
+          if (
+            !hub ||
+            hub.id !== payload.deviceId ||
+            hub.farmCode !== payload.farmCode ||
+            hub.pairingCode !== payload.pairingCode
+          )
+            throw new Error('This hub QR does not belong to the selected farm.');
+          Object.assign(hub, { status: 'reporting', pairedAt: now });
+        } else {
+          const hub = s.deviceSimulation.hub;
+          const node = s.deviceSimulation.nodes.find((item) => item.id === payload.deviceId);
+          if (
+            !hub ||
+            hub.status !== 'reporting' ||
+            !node ||
+            node.farmCode !== payload.farmCode ||
+            node.pairingCode !== payload.pairingCode
+          )
+            throw new Error('This node QR does not belong to the selected farm or hub.');
+          Object.assign(node, { status: 'reporting', pairedAt: now, hubId: hub.id });
+        }
+        break;
+      }
+      case 'removeVirtualDevice':
+        requireTechnicianRole();
+        if (['normal_monitor', 'normal_control'].includes(s.site.status))
+          throw new Error('Deactivate the installed house before removing paired devices.');
+        if (s.deviceSimulation.hub?.id === a.id) {
+          s.deviceSimulation = emptyDeviceSimulation();
+        } else {
+          const count = s.deviceSimulation.nodes.length;
+          s.deviceSimulation.nodes = s.deviceSimulation.nodes.filter((node) => node.id !== a.id);
+          if (count === s.deviceSimulation.nodes.length)
+            throw new Error('The virtual device was not found.');
+        }
+        break;
+      case 'updateVirtualFirmware': {
+        requireTechnicianRole();
+        const device =
+          s.deviceSimulation.hub?.id === a.id
+            ? s.deviceSimulation.hub
+            : s.deviceSimulation.nodes.find((node) => node.id === a.id);
+        if (!device || device.status !== 'reporting')
+          throw new Error('Only a reporting device can receive a simulated firmware update.');
+        const version = device.firmwareVersion ?? '0.1.0-sim';
+        const parts = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+        const nextVersion = parts
+          ? `${parts[1]}.${parts[2]}.${Number(parts[3]) + 1}-sim`
+          : '0.1.1-sim';
+        device.firmwareVersion = nextVersion;
+        device.firmwareUpdatedAt = now;
+        recordDeviceEvent(s.deviceSimulation, {
+          id: id('device-history'),
+          deviceId: a.id,
+          action: 'firmware_updated',
+          details: `Simulated firmware updated to ${nextVersion}.`,
+          createdAt: now,
+        });
+        break;
+      }
       case 'ack':
         s.snapshot = await engine.acknowledge(a.id, s.context);
         break;
       case 'fullPower':
+        if (s.site.status !== 'normal_control')
+          throw new Error('Full-power control is locked until control commissioning is approved.');
         s.snapshot = await engine.requestFullPower(s.context);
         break;
       case 'reconnect':
@@ -283,11 +568,30 @@ export class LocalFarmRepository {
           throw new Error('Choose At the farm to request a new dummy reading.');
         s.snapshot.sampledAt = now;
         break;
+      case 'restore':
       case 'tick':
+        // Upgrade profiles saved by 0.1.0 without carrying its untouched demo flock
+        // into the user's house. User-created cycles have distinct IDs and stay intact.
+        if (a.type === 'restore' && s.house && s.flock?.id === 'flock-1') s.flock = null;
         s.snapshot = engine.tick();
         break;
       case 'addSensor': {
         requireTechnician();
+        if (s.site.survey)
+          throw new Error(
+            'Add a surveyed-farm node through hub pairing, not the sample sensor form.',
+          );
+        if (
+          s.site.status !== 'not_started' &&
+          ![
+            'installing',
+            'commissioning',
+            'monitoring_trial',
+            'normal_monitor',
+            'normal_control',
+          ].includes(s.site.status)
+        )
+          throw new Error('Approve the plan and start installation before adding nodes.');
         if (
           !sections.includes(a.section) ||
           !a.calibrated ||
@@ -315,7 +619,8 @@ export class LocalFarmRepository {
         break;
       }
       case 'moveSensor': {
-        requireTechnician();
+        if (s.site.survey) requireTechnicianRole();
+        else requireTechnician();
         const sensor = s.snapshot.sensors.find((n) => n.id === a.id);
         if (
           !sensor ||
@@ -330,6 +635,17 @@ export class LocalFarmRepository {
         )
           throw new Error('Choose a position inside the selected section.');
         Object.assign(sensor, { section: a.section, x: a.x, y: a.y });
+        const node = s.deviceSimulation.nodes.find((item) => item.id === a.id);
+        if (node) {
+          Object.assign(node, { section: a.section, x: a.x, y: a.y });
+          recordDeviceEvent(s.deviceSimulation, {
+            id: id('device-history'),
+            deviceId: node.id,
+            action: 'configured',
+            details: `Node placement saved in Section ${a.section}.`,
+            createdAt: now,
+          });
+        }
         break;
       }
       case 'retireSensor': {
@@ -340,13 +656,29 @@ export class LocalFarmRepository {
           throw new Error('Keep at least one sensor in the sample house.');
         s.retired.push(sensor);
         s.snapshot.sensors = s.snapshot.sensors.filter((n) => n.id !== a.id);
+        s.deviceSimulation.nodes = s.deviceSimulation.nodes.filter((node) => node.id !== a.id);
         break;
       }
       case 'calibrate':
-        requireTechnician();
+        if (s.site.survey) requireTechnicianRole();
+        else requireTechnician();
+        if (
+          !['commissioning', 'monitoring_trial', 'normal_monitor', 'normal_control'].includes(
+            s.site.status,
+          )
+        )
+          throw new Error('Calibration becomes available during commissioning.');
         if (!s.snapshot.sensors.some((n) => n.id === a.id && n.online))
           throw new Error('Choose a reporting sensor.');
         s.calibration[a.id] = now;
+        if (s.deviceSimulation.nodes.some((node) => node.id === a.id))
+          recordDeviceEvent(s.deviceSimulation, {
+            id: id('device-history'),
+            deviceId: a.id,
+            action: 'calibrated',
+            details: 'Simulated sensor calibration recorded.',
+            createdAt: now,
+          });
         break;
       case 'startFlock':
         requireManager();
@@ -373,6 +705,7 @@ export class LocalFarmRepository {
         const old = s.inspections.find((n) => n.id === a.id);
         if (a.id && !old) throw new Error('This note no longer exists.');
         const note = {
+          ...old,
           id: old?.id ?? id('note'),
           kind: a.kind,
           text: a.text.trim(),
@@ -402,5 +735,7 @@ export class LocalFarmRepository {
         s.people = s.people.filter((p) => p.id !== a.id);
         break;
     }
+    if (s.site.survey || s.deviceSimulation.hub || s.deviceSimulation.nodes.length)
+      s.snapshot = snapshotForDeviceSimulation(s.snapshot, s.deviceSimulation);
   }
 }

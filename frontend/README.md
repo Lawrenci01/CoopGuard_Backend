@@ -1,81 +1,77 @@
 # CoopGuard mobile app
 
-Native **React Native + TypeScript** app using Expo, with working local features and dummy farm data. Android is the first installation target. JavaScript owns the app and local CRUD; Python is reserved for the planned hub AI service.
+Native React Native + TypeScript / Expo app, Android first. Version **0.6.1** uses one username/password account across the Render cloud service and a commissioned farm hub. The app automatically prefers the paired hub over farm WiFi, falls back to Render on any internet connection, and uses its bounded cache when both are unavailable. It includes Farm IDs, a selection-based technician survey, virtual hub/node QR pairing, generated installation plans, commissioning, monitoring trial and activation. Sensor readings, charts, equipment responses and QR devices remain simulations. Python is reserved for the future AI service.
 
-## Install on Android
+## Install and sign in
 
-The standalone build is generated at `dist/android/CoopGuard.apk`. Transfer it to the phone, open it, and allow installation from the app used to open the file when Android asks. Alternatively, with USB debugging enabled:
+1. Deploy the [backend](../backend/README.md) to Render and Turso.
+2. Open `dist/android/CoopGuard.apk` on Android and install the update. Do not uninstall or clear app data if keeping earlier phone records.
+3. Sign in normally. The cloud address is built into the app. During installation, a technician opens Account → **Pair farm hub** and enters the hub HTTPS address once. Owner and worker accounts never configure server addresses.
+4. Sign in using the credentials supplied by the team (owner/technician) or owner (worker). Change the temporary password on first sign-in; passwords require 12–128 characters.
+
+The current private temporary credentials are `../backend/.local/owner-reset-20261001.txt` for `cg.owner` and `../backend/.local/technician-reset-20261001.txt` for `cg.technician`. They are excluded from Git and are not bundled in the APK. Each person should use their own account and change the temporary password at first sign-in.
+
+This APK embeds the JavaScript bundle and fonts. Metro and Expo Go are unnecessary. The internal APK uses the existing Android test signing key; store distribution needs a private release key. The internal Android build trusts the project's public local CA and system CAs, validates server names, and disallows cleartext HTTP. No server private key is embedded.
+
+## Screens and account authority
+
+| Role       | Screens                                   | Main actions                                                                                     |
+| ---------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Owner      | Overview, Alerts, House map, Trends, Farm | Manage flock cycles; create, rename, reset or disable worker accounts for this farm              |
+| Worker     | Overview, Alerts, House map, Notes        | Daily checks, acknowledge alerts, record observations, permitted simulated ventilation increases |
+| Technician | Farm selector, Setup workspace            | Survey, plan approval, QR pairing, installation, commissioning, trial and activation             |
+
+An admin creates an owner account for each farm; owners cannot create owners or technicians. One shared technician account works across all registered farms. There is no public signup or role picker. The server enforces owner farm membership and technician role access on each request, independently of the UI. See [accounts and roles](../docs/ACCOUNTS_AND_ROLES.md).
+
+**Overview** keeps important alerts above setup prompts. Acknowledging an alert does not resolve its condition. Temperature/humidity summarize valid reporting sensors; individual node details and other metrics are in House map. Charts remain fixture history.
+
+The technician completes a five-section, selection-based installation survey covering house layout, installed equipment and controller status, hub power and networking, nodes and sensors, alerts, safety and evidence. The signed-in Farm ID supplies farm identity. Questions are included only when their answer changes hardware placement, an app function, or control eligibility. The app generates a house-specific function profile and installation plan, then keeps automatic control locked through plan approval, virtual device pairing, installation checks, commissioning and a monitoring trial. Survey-selected metrics determine which reading layers and trends are visible; sound features require a microphone and recording consent; equipment views contain only surveyed groups. The owner sees setup progress until activation, then receives the verified profile and farm functions.
+
+After sign-in, the technician selects any registered Farm ID or scans its Farm QR before setup records load. The technician workspace hides operational alerts, sample readings, the house map and the sample sensor directory. For hardware-flow testing without physical devices, a technician creates a virtual hub and nodes after the survey, displays or scans their QR codes, assigns each node to a profile and house section, and pairs it to the selected Farm ID. The backend verifies the farm exists and authorizes the shared technician role. Owners remain limited to their own farm, including online access; a Farm ID never grants access by itself.
+
+This workflow records and enforces the work, but the current nodes, readings and equipment responses are still samples. Checklist completion is not proof that physical hardware exists; the technician must record only tests actually performed.
+
+For existing 0.1/0.2 phone records: a technician can sign in on that phone and open **Account → Import previous phone records** before the farm has new changes. The technician reviews the imported details during the site survey. Import keeps the original phone copy and does not create accounts or commission equipment.
+
+## Offline and synchronization
+
+- With the paired Pi hub reachable over farm WiFi, sign-in and records work without internet using the hub's synchronized local database.
+- With Render reachable, sign-in and record synchronization work from any internet-connected WiFi or mobile-data network. The app labels that path as cloud and the backend applies remote-operation restrictions.
+- After a successful sign-in, a disconnected phone can reopen its cached farm for **24 hours since its last successful account check**, within its seven-day session. A temporary password must be changed online first. This offline limit bounds access after account revocation; a disconnected phone cannot learn of a new disable immediately.
+- New inspection notes and a completed technician survey can save locally and synchronize on reconnection. In-progress survey sections also save as an account/farm-specific phone draft. Stable request IDs prevent duplicate retries. Installation, commissioning, activation, existing-note edits, flock changes, account administration and equipment requests require the server.
+- Header and Account separately show the active path, farm hub availability, cloud availability, sync time and pending note count.
+- Cached farms and pending notes are separated by account and farm so switching between that farm's hub and cloud does not create two phone caches. Session tokens use Expo SecureStore; passwords are not saved. Signing out leaves queued notes in that account's cache, accessible after signing back into it.
+- Equipment commands are never queued for later reconnection. Readings retain their original sample timestamps. Server access does not prove hub access or physical actuation.
+
+The final transport remains **sensor → LoRa → Pi hub → local WiFi → phone**. Phones do not communicate directly over LoRa. The JavaScript backend now includes the Turso Sync hub foundation; physical Pi commissioning and simultaneous offline/cloud edit testing remain. OS push delivery, real sensors, sound capture and trained AI are not connected yet. No SMS channel exists.
+
+## Build on Windows
+
+Use Node.js 24, Java 17, Android platform 36, build tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1. Set `JAVA_HOME` and `ANDROID_HOME` (the script also recognizes `C:\Android`).
 
 ```powershell
-adb install -r dist/android/CoopGuard.apk
-adb shell am start -n com.coopguard.app/.MainActivity
-```
-
-Open **CoopGuard** from the phone's app list. Tap **Open my farm**, or **Set up my house** to enter house details. The APK includes the JavaScript bundle and fonts and runs without Expo Go, a development server, a PC connection, or internet. It uses the Android test signing key for this internal build; store distribution requires a private release key.
-
-The **Sample data** label means sensor readings and equipment responses are dummy data. Forms and actions save real local records on this phone. No physical hub or equipment is connected. This local build blocks Android's Internet permission, so the installed app cannot depend on a network. Restore that permission when integrating the real hub/backend.
-
-## Working features
-
-| Feature          | What you can do                                                                                                                     |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Overview         | Read sensor summaries, inspect a sensor, open related alerts, request a simulated full-power override                               |
-| Alerts           | Filter active/history, acknowledge an alert, view readings from current or retired sensors; acknowledgment survives restart         |
-| House map        | Switch five metric layers, inspect sensors, see saved sensor placements                                                             |
-| Trends           | Switch metrics and periods in the dummy history; inspect both AI sections                                                           |
-| House details    | Save and edit names, dimensions, house type, controller and flock type; header and control mode update                              |
-| Sensors          | As Technician, add a sensor through the checks, move it, retire it, inspect its archived record, and record a sample accuracy check |
-| Flocks           | End a cycle with confirmation, retain its summary, start another with a validated date and bird count                               |
-| Inspection notes | Create, edit, delete, and export environment or sound observations from the AI panels                                               |
-| Farm team        | Owner can create, edit, and remove local team profiles while retaining an owner; these are not authentication accounts              |
-| Settings         | Persist notification preference, sample connection, role, control mode, and AI availability state                                   |
-| System check     | Inspect current local data, sample sensor coverage, AI status, and retired sensor records                                           |
-
-Use the avatar or connection label to open **Sample settings**. Select **Technician** and **At the farm** to manage sensors. These roles exercise permissions in the local data layer; they are not secure sign-in. Existing-controller or uncertain house profiles restrict sample control to monitor-only. The sample map has three sections; saved dimensions do not yet generate a commissioned floor plan.
-
-Both AI tracks remain visible: environmental patterns and unusual flock sounds. They show **Needs pilot data** or **Service unavailable**. Inspection notes work now; recording audio, training, and inference need the future data pipeline. No model diagnosis or confidence score is fabricated.
-
-## Offline persistence and controls
-
-`LocalFarmRepository` uses a validated, versioned AsyncStorage record. Mutations are serialized and saved before the UI confirms success. It persists house details, devices, archived devices, acknowledgments, inspection notes, team profiles, flock history, preferences, and dummy farm state. Failed writes do not replace the last saved state. Corrupt saved data produces a retry screen without overwriting the stored record.
-
-The dummy farm runs entirely on the phone, including in airplane mode. The connection selector exercises farm-link scenarios; it does not measure the phone's internet connection. In the disconnected scenario, equipment actions are blocked, while house details, notes, team records and flock changes can still be saved locally. Actual cloud sync is not implemented or claimed.
-
-Simulated full power expires after two hours. Restarting or tapping again cannot extend its deadline. Remote sample requests expire after 60 seconds and require an explicit valid reconnect; expired requests never apply. The local dummy store preserves these simulation timestamps. The separate future reading-cache adapter strips commands and must never be used as a hardware command queue. Real authorization, command acknowledgement, commissioning and safety limits must also be enforced on the hub and nodes.
-
-The eventual transport is **sensor → LoRa → Pi hub → local WiFi → phone**. A phone does not connect directly to LoRa.
-
-## Build the standalone APK on Windows
-
-Use Node.js 24, Java 17, and the Android SDK with platform 36, build tools 36.0.0, NDK 27.1.12297006 and CMake 3.22.1. Set `ANDROID_HOME` to the SDK directory; the script also recognizes `C:\Android`. Install dependencies and run:
-
-```powershell
-cd frontend
+cd backend
 npm ci
+npm run tls
+cd ../frontend
+npm ci
+$env:EXPO_PUBLIC_API_URL = 'https://YOUR-RENDER-SERVICE.onrender.com'
 npm run build:android
 ```
 
-The script generates the native Android project with Expo prebuild and runs Gradle `:app:assembleRelease`, then copies the APK to `dist/android/CoopGuard.apk`. Default ABIs are `arm64-v8a,armeabi-v7a`; pass `-Architectures arm64-v8a,x86_64` directly to the PowerShell script for an emulator build. Generated native folders and build artifacts are ignored by Git. First builds download substantial Android/Gradle dependencies.
+The local CA must exist before native prebuild because the same internal build must trust the commissioned hub; `CG_LOCAL_CA` can specify another public CoopGuard CA certificate. The plugin copies only that certificate. Render uses a normal publicly trusted certificate. Default ABIs are arm64-v8a and armeabi-v7a. Generated native folders, APKs and secrets are ignored by Git.
 
-See the official [Expo local release build guide](https://docs.expo.dev/guides/local-app-production/) and [Android SDK command tools](https://developer.android.com/studio#command-tools). No Expo account, EAS subscription, or API keys are needed for this local build.
+For development use `npm run android` with Metro. Expo Go does not include this project's private CA configuration; use a native development build for the local HTTPS server.
 
-For development only, `npm start` serves the app to compatible Expo Go installations. `npm run android` builds a native debug installation; it uses the development server. Use **build:android** for the standalone APK.
-
-## Checks
+## Verification and implementation
 
 ```powershell
 npm run typecheck
 npm test
 npm run test:ui
 npm run format:check
-npx expo-doctor
-npm audit
 ```
 
-Domain tests exercise deadlines, permissions, data validation, durable CRUD, serialized writes, storage failures and corruption. Native component tests exercise navigation, sensor creation, inspection notes, saved acknowledgments and house setup. Decorative icons and platform storage are mocked in those component tests. The standalone app was also installed and checked on a Redmi Note 9 Pro; see the [device verification report](VERIFICATION.md).
+[Verification](VERIFICATION.md) records release-specific results. Domain tests cover rules, persistence, deadlines, cache isolation and validation. Native interaction tests cover login, temporary-password changes, role navigation, owner-created workers, setup, logout and offline note synchronization. Those native component tests mock transport/storage; actual HTTP authorization and SQLite persistence are tested separately in `backend/tests`.
 
-## Implementation boundaries
-
-Real hub discovery, secure accounts, actual readings, cloud sync, hardware pairing/calibration/updates, OS push delivery, weather data, and trained AI require their backend/hardware services. The notification switch currently saves a preference. Sample charts remain fixtures and are not generated from actual flock observations. The app does not record audio or drive mains equipment.
-
-`src/services/localFarmRepository.ts` owns local app mutations; `demoFarmService.ts` owns dummy control behavior; `src/state/FarmProvider.tsx` connects them to native screens. Replace this adapter with the authenticated Node.js/TypeScript backend as those contracts are implemented. Read the [current plan](../docs/CURRENT_PLAN.md) and [edge AI replan](../docs/EDGE_AI_REPLAN.md) before connecting hardware.
+`AuthProvider` owns secure sessions; `FarmProvider` owns account-scoped caching and synchronization; `api.ts` owns HTTPS requests. The backend reuses the pure `LocalFarmRepository` reducer for the current sample farm behavior. The legacy local directory reducer is retained for old records/tests and is excluded from the server action schema. Hardware rules and command acknowledgment will need their own real integration before commissioning.

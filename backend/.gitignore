@@ -1,0 +1,21 @@
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+*.log
+
+# Local databases, credentials, certificates, and tunnel binaries
+.local/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.key
+*.crt
+*.pem
+
+# Operating-system files
+.DS_Store
+Thumbs.db
