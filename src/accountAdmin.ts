@@ -15,21 +15,30 @@ export async function reprovisionFarmAccounts(
   technicianUsername: string,
   now = Date.now(),
   createIfMissing = false,
-): Promise<{ farmId: string; farmCreated: boolean; credentials: NewCredential[] }> {
-  const allFarms = await db.prepare("SELECT id,name FROM farms ORDER BY name").all();
+): Promise<{
+  farmId: string;
+  farmCreated: boolean;
+  credentials: NewCredential[];
+}> {
+  const allFarms = await db
+    .prepare("SELECT id,name FROM farms ORDER BY name")
+    .all();
   const farms = allFarms.filter(
-    (farm) => String(farm.name).toLocaleLowerCase() === farmName.toLocaleLowerCase(),
+    (farm) =>
+      String(farm.name).toLocaleLowerCase() === farmName.toLocaleLowerCase(),
   );
   let farmCreated = false;
   let farmId: string;
   if (farms.length === 1) farmId = farms[0]!.id as string;
   else if (farms.length === 0 && allFarms.length === 0 && createIfMissing) {
-    for (const username of [ownerUsername, technicianUsername]) {
-      if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
-        throw new Error(
-          `The empty database contains an orphaned ${username} account. Choose a new username or repair it first.`,
-        );
-    }
+    if (
+      await db
+        .prepare("SELECT 1 FROM users WHERE username=?")
+        .get(ownerUsername)
+    )
+      throw new Error(
+        `The empty database contains an orphaned ${ownerUsername} account. Choose a new username or repair it first.`,
+      );
     farmId = await createFarm(db, farmName, now);
     farmCreated = true;
   } else {
@@ -46,43 +55,99 @@ export async function reprovisionFarmAccounts(
     .prepare("SELECT user_id FROM memberships WHERE farm_id=?")
     .all(farmId);
   const oldUserIds = members.map((row) => row.user_id as string);
-  for (const username of [ownerUsername, technicianUsername]) {
-    const existing = await db.prepare("SELECT id FROM users WHERE username=?").get(username);
-    if (!existing) continue;
-    const id = existing.id as string;
+  if (ownerUsername === technicianUsername)
+    throw new Error("Owner and technician must use separate accounts.");
+  const existingOwner = await db
+    .prepare("SELECT id FROM users WHERE username=?")
+    .get(ownerUsername);
+  if (existingOwner) {
     const membershipCount = await db
       .prepare("SELECT COUNT(*) n FROM memberships WHERE user_id=?")
-      .get(id);
-    if (!oldUserIds.includes(id) || Number(membershipCount?.n) !== 1)
+      .get(existingOwner.id as string);
+    if (
+      !oldUserIds.includes(existingOwner.id as string) ||
+      Number(membershipCount?.n) !== 1
+    )
       throw new Error(
-        `The username ${username} belongs to an account outside this farm. Choose a new username.`,
+        `The username ${ownerUsername} belongs to an account outside this farm. Choose a new username.`,
       );
   }
+  const technicians = (await db
+    .prepare(
+      "SELECT id,username FROM users WHERE role='technician' AND active=1 ORDER BY created_at",
+    )
+    .all()) as { id: string; username: string }[];
+  if (technicians.length > 1)
+    throw new Error(
+      "Multiple active technician accounts exist. Consolidate them before reprovisioning.",
+    );
+  const sharedTechnician = technicians[0];
+  if (sharedTechnician && sharedTechnician.username !== technicianUsername)
+    throw new Error(
+      `Use the shared technician account ${sharedTechnician.username}.`,
+    );
+  if (
+    !sharedTechnician &&
+    (await db
+      .prepare("SELECT 1 FROM users WHERE username=?")
+      .get(technicianUsername))
+  )
+    throw new Error(
+      "The technician username belongs to an inactive or non-technician account.",
+    );
   const credentials: NewCredential[] = [];
-  const inserts = [];
-  for (const [username, role, displayName] of [
-    [ownerUsername, "owner", "Farm owner"],
-    [technicianUsername, "technician", "CoopGuard technician"],
-  ] as const) {
+  const ownerPassword = temporaryPassword();
+  const ownerId = randomUUID();
+  credentials.push({
+    role: "owner",
+    username: ownerUsername,
+    password: ownerPassword,
+  });
+  const inserts = [
+    {
+      sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'owner',?,?)",
+      args: [
+        ownerId,
+        ownerUsername,
+        "Farm owner",
+        await hashPassword(ownerPassword),
+        now,
+      ],
+    },
+    {
+      sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+      args: [ownerId, farmId],
+    },
+  ];
+  if (!sharedTechnician) {
     const password = temporaryPassword();
     const id = randomUUID();
-    credentials.push({ role, username, password });
-    inserts.push(
-      {
-        sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)",
-        args: [id, username, displayName, role, await hashPassword(password), now],
-      },
-      {
-        sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
-        args: [id, farmId],
-      },
-    );
+    credentials.push({
+      role: "technician",
+      username: technicianUsername,
+      password,
+    });
+    inserts.push({
+      sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'technician',?,?)",
+      args: [
+        id,
+        technicianUsername,
+        "CoopGuard technician",
+        await hashPassword(password),
+        now,
+      ],
+    });
   }
+  const replaceUserIds = oldUserIds.filter((id) => id !== sharedTechnician?.id);
   const userPlaceholders = oldUserIds.map(() => "?").join(",");
+  const replaceUserPlaceholders = replaceUserIds.map(() => "?").join(",");
   await db.batch([
-    ...(oldUserIds.length
+    ...(replaceUserIds.length
       ? [
-          { sql: `DELETE FROM sessions WHERE user_id IN (${userPlaceholders})`, args: oldUserIds },
+          {
+            sql: `DELETE FROM sessions WHERE user_id IN (${replaceUserPlaceholders})`,
+            args: replaceUserIds,
+          },
           {
             sql: `DELETE FROM mutations WHERE farm_id=? AND user_id IN (${userPlaceholders})`,
             args: [farmId, ...oldUserIds],
@@ -91,11 +156,11 @@ export async function reprovisionFarmAccounts(
       : []),
     { sql: "DELETE FROM audit WHERE farm_id=?", args: [farmId] },
     { sql: "DELETE FROM memberships WHERE farm_id=?", args: [farmId] },
-    ...(oldUserIds.length
+    ...(replaceUserIds.length
       ? [
           {
-            sql: `DELETE FROM users WHERE id IN (${userPlaceholders}) AND NOT EXISTS (SELECT 1 FROM memberships WHERE memberships.user_id=users.id)`,
-            args: oldUserIds,
+            sql: `DELETE FROM users WHERE id IN (${replaceUserPlaceholders}) AND NOT EXISTS (SELECT 1 FROM memberships WHERE memberships.user_id=users.id)`,
+            args: replaceUserIds,
           },
         ]
       : []),

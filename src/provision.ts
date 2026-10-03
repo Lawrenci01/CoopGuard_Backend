@@ -13,6 +13,7 @@ const { values } = parseArgs({
     farm: { type: "string" },
     owner: { type: "string" },
     technician: { type: "string" },
+    admin: { type: "string" },
     output: { type: "string" },
     "reset-user": { type: "string" },
   },
@@ -37,7 +38,7 @@ if (values["reset-user"]) {
     hash = await hashPassword(password);
   await db.batch([
     {
-      sql: "UPDATE users SET password_hash=?,must_change=1 WHERE id=?",
+      sql: "UPDATE users SET password_hash=?,active=1,must_change=1 WHERE id=?",
       args: [hash, user.id as string],
     },
     {
@@ -46,6 +47,17 @@ if (values["reset-user"]) {
     },
   ]);
   credentials.push(`Username: ${username}\nTemporary password: ${password}`);
+} else if (values.admin) {
+  const username = usernameSchema.parse(values.admin);
+  if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
+    throw new Error("Admin username already exists. Use --reset-user to replace its password.");
+  const password = temporaryPassword();
+  await db
+    .prepare(
+      "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'admin',?,?)",
+    )
+    .run(randomUUID(), username, "Team admin", await hashPassword(password), Date.now());
+  credentials.push(`Role: admin\nUsername: ${username}\nTemporary password: ${password}`);
 } else {
   if (
     !values.farm?.trim() ||
@@ -58,13 +70,35 @@ if (values["reset-user"]) {
     technician = usernameSchema.parse(values.technician);
   if (owner === technician)
     throw new Error("Owner and technician must have separate accounts.");
-  for (const username of [owner, technician])
-    if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
-      throw new Error("Username already exists. Choose a unique account name.");
+  if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(owner))
+    throw new Error(
+      "Owner username already exists. Choose a unique account name.",
+    );
+  const activeTechnicians = (await db
+    .prepare(
+      "SELECT username FROM users WHERE role='technician' AND active=1 ORDER BY created_at",
+    )
+    .all()) as { username: string }[];
+  if (activeTechnicians.length > 1)
+    throw new Error(
+      "Multiple active technician accounts exist. Consolidate them before provisioning another farm.",
+    );
+  const sharedTechnician = activeTechnicians[0];
+  if (sharedTechnician && sharedTechnician.username !== technician)
+    throw new Error(
+      `Use the shared technician account ${sharedTechnician.username}.`,
+    );
+  if (
+    !sharedTechnician &&
+    (await db.prepare("SELECT 1 FROM users WHERE username=?").get(technician))
+  )
+    throw new Error(
+      "Technician username is already used by an inactive or non-technician account.",
+    );
   const entries = [];
   for (const [username, role] of [
     [owner, "owner"],
-    [technician, "technician"],
+    ...(!sharedTechnician ? [[technician, "technician"] as const] : []),
   ] as const) {
     const password = temporaryPassword();
     entries.push({
@@ -77,23 +111,33 @@ if (values["reset-user"]) {
   }
   const farmId = await createFarm(db, values.farm.trim());
   credentials.push(`Farm: ${values.farm.trim()}\nFarm ID: ${farmCode(farmId)}`);
+  if (sharedTechnician)
+    credentials.push(
+      `Shared technician account reused: ${sharedTechnician.username}`,
+    );
   await db.batch(
     entries.flatMap((entry) => [
-      {
-        sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)",
-        args: [
-          entry.id,
-          entry.username,
-          entry.role === "owner" ? "Farm owner" : "CoopGuard technician",
-          entry.role,
-          entry.hash,
-          Date.now(),
-        ],
-      },
-      {
-        sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
-        args: [entry.id, farmId],
-      },
+      ...[
+        {
+          sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)",
+          args: [
+            entry.id,
+            entry.username,
+            entry.role === "owner" ? "Farm owner" : "CoopGuard technician",
+            entry.role,
+            entry.hash,
+            Date.now(),
+          ],
+        },
+        ...(entry.role === "owner"
+          ? [
+              {
+                sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+                args: [entry.id, farmId],
+              },
+            ]
+          : []),
+      ],
     ]),
   );
   for (const entry of entries) {

@@ -190,6 +190,33 @@ const schema = [
   "CREATE TABLE IF NOT EXISTS login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, until_at INTEGER NOT NULL)",
 ];
 
+async function migrateLegacyUsersTable(db: CoopDatabase) {
+  const legacy = await db
+    .prepare(
+      "SELECT sql FROM sqlite_schema WHERE type='table' AND name='users'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (!legacy?.sql) return;
+  const definition = legacy.sql;
+  if (definition.includes("'admin'") || !definition.includes("'technician'")) return;
+  await db.prepare("PRAGMA foreign_keys=OFF").run();
+  try {
+    await db.batch([
+      { sql: "DROP TABLE IF EXISTS users_v2" },
+      {
+        sql: "CREATE TABLE users_v2 (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner','worker','technician','admin')), password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, must_change INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)",
+      },
+      {
+        sql: "INSERT INTO users_v2(id,username,name,role,password_hash,active,must_change,created_at) SELECT id,username,name,role,password_hash,active,must_change,created_at FROM users",
+      },
+      { sql: "DROP TABLE users" },
+      { sql: "ALTER TABLE users_v2 RENAME TO users" },
+    ]);
+  } finally {
+    await db.prepare("PRAGMA foreign_keys=ON").run();
+  }
+}
+
 async function disableLegacyDefaultAdmin(db: CoopDatabase) {
   const user = await db
     .prepare("SELECT id,password_hash FROM users WHERE username=? AND role='admin'")
@@ -257,6 +284,7 @@ export async function openDatabase(
     );
   } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
+  await migrateLegacyUsersTable(database);
   await disableLegacyDefaultAdmin(database);
   const farmColumns = new Set(
     (await database.prepare("PRAGMA table_info(farms)").all()).map((row) => String(row.name)),

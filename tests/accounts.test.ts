@@ -83,7 +83,23 @@ test("farm reprovision revokes old accounts while preserving the farm", async (t
     (await db
       .prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?")
       .get(farmId))!.n,
-    2,
+    1,
+  );
+  const secondFarmId = await createFarm(db, "Second farm");
+  const secondProvision = await reprovisionFarmAccounts(
+    db,
+    "Second farm",
+    "second.owner",
+    "new.technician",
+  );
+  assert.equal(secondProvision.farmId, secondFarmId);
+  assert.equal(secondProvision.credentials.length, 1);
+  assert.equal(secondProvision.credentials[0]?.role, "owner");
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM users WHERE role='technician'")
+      .get())!.n,
+    1,
   );
 });
 
@@ -105,6 +121,25 @@ test("farm reprovision can initialize a confirmed empty cloud database", async (
   assert.equal(result.farmCreated, true);
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM farms").get())!.n, 1);
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 2);
+});
+
+test("fresh databases do not expose a predictable default admin account", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-bootstrap-"));
+  const path = join(dir, "test.sqlite");
+  const db = await openDatabase(path);
+  t.after(async () => {
+    await db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users").get())!.n, 0);
+  const app = await createApp(db);
+  const login = await app.inject({
+    method: "POST",
+    url: "/v1/auth/login",
+    payload: { username: "team.admin", password: "password.admin123" },
+  });
+  assert.equal(login.statusCode, 401, login.body);
 });
 
 test("the retired fixed-password admin is disabled and its sessions are revoked", async (t) => {
@@ -147,6 +182,47 @@ test("the retired fixed-password admin is disabled and its sessions are revoked"
   );
 });
 
+test("legacy user schema without admin is upgraded automatically", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-upgrade-"));
+  const path = join(dir, "test.sqlite");
+  const legacy = await openDatabase(path);
+
+  await legacy.batch([
+    {
+      sql: "DROP TABLE users",
+    },
+    {
+      sql: "CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner','worker','technician')), password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, must_change INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)",
+    },
+    {
+      sql: "INSERT INTO users(id,username,name,role,password_hash,active,must_change,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      args: [
+        "legacy-owner",
+        "legacy.owner",
+        "Legacy Owner",
+        "owner",
+        await hashPassword("Legacy pass 123!"),
+        1,
+        0,
+        Date.now(),
+      ],
+    },
+  ]);
+
+  await legacy.close();
+  const reopened = await openDatabase(path);
+  t.after(async () => {
+    await reopened.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const definition = await reopened
+    .prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='users'")
+    .get();
+  assert.match(String(definition?.sql), /'admin'/);
+  assert.ok(await reopened.prepare("SELECT 1 FROM users WHERE username=?").get("legacy.owner"));
+});
+
 test("admin can create a farm record with customer metadata and generated credentials", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "coopguard-admin-farm-"));
   const path = join(dir, "test.sqlite");
@@ -155,12 +231,18 @@ test("admin can create a farm record with customer metadata and generated creden
     await db.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  await db.batch([
-    {
-      sql: "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
-      args: ["admin-1", "team.admin", "Team admin", "admin", await hashPassword("Admin password 123!"), Date.now()],
-    },
-  ]);
+  await db
+    .prepare(
+      "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
+    )
+    .run(
+      "admin-1",
+      "team.admin",
+      "Team admin",
+      "admin",
+      await hashPassword("Admin password 123!"),
+      Date.now(),
+    );
   const app = await createApp(db);
   const login = async () => {
     const r = await app.inject({
@@ -184,25 +266,66 @@ test("admin can create a farm record with customer metadata and generated creden
       address: "12 River Lane, Bayview",
       ownerUsername: "north.owner",
       ownerName: "North Valley Owner",
-      technicianUsername: "north.tech",
-      technicianName: "North Valley Tech",
     },
   });
   assert.equal(response.statusCode, 200, response.body);
-  const body = response.json<{ farmId: string; farmCode: string; qr: string; owner: { username: string; password: string }; technician: { username: string; password: string } }>();
+  const body = response.json<{
+    farmId: string;
+    farmCode: string;
+    qr: string;
+    owner: { username: string; password: string };
+  }>();
   assert.match(body.farmCode, /^CG-PH-/);
   assert.equal(body.qr.startsWith("coopguard://farm/open?"), true);
   assert.equal(body.owner.username, "north.owner");
-  assert.equal(body.technician.username, "north.tech");
   assert.equal(body.owner.password.length >= 12, true);
-  assert.equal(body.technician.password.length >= 12, true);
-  const farm = await db.prepare("SELECT name,customer_name,contact_phone,address FROM farms WHERE id=?").get(body.farmId);
+  assert.equal("technician" in body, false);
+  const farm = await db
+    .prepare(
+      "SELECT name,customer_name,contact_phone,address FROM farms WHERE id=?",
+    )
+    .get(body.farmId);
   assert.equal(farm?.name, "North Valley Poultry");
   assert.equal(farm?.customer_name, "North Valley Coop");
   assert.equal(farm?.contact_phone, "+1 555 010 2020");
   assert.equal(farm?.address, "12 River Lane, Bayview");
-  assert.equal((await db.prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?").get(body.farmId))!.n, 2);
-  assert.equal((await db.prepare("SELECT COUNT(*) n FROM users WHERE username IN (?,?)").get("north.owner", "north.tech"))!.n, 2);
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?")
+      .get(body.farmId))!.n,
+    1,
+  );
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM users WHERE username=?")
+      .get("north.owner"))!.n,
+    1,
+  );
+
+  const second = await app.inject({
+    method: "POST",
+    url: "/v1/admin/farms",
+    headers: { authorization: `Bearer ${admin.token}` },
+    payload: {
+      farmName: "South Valley Poultry",
+      ownerUsername: "south.owner",
+      ownerName: "South Valley Owner",
+    },
+  });
+  assert.equal(second.statusCode, 200, second.body);
+  const secondBody = second.json<typeof body>();
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM users WHERE role='technician'")
+      .get())!.n,
+    0,
+  );
+  assert.equal(
+    (await db
+      .prepare("SELECT COUNT(*) n FROM memberships WHERE farm_id=?")
+      .get(secondBody.farmId))!.n,
+    1,
+  );
 });
 
 test("shared accounts, farm permissions, offline replay and durable records", async (t) => {
@@ -283,6 +406,50 @@ test("shared accounts, farm permissions, offline replay and durable records", as
           (await send("GET", `/v1/farms/${otherFarm}`, owner.token)).statusCode,
           403,
         );
+        assert.equal(
+          (await send("GET", `/v1/farms/${otherFarm}`, tech.token)).statusCode,
+          200,
+        );
+        const onlineOwnerRequest = await app.inject({
+          method: "GET",
+          url: `/v1/farms/${otherFarm}`,
+          headers: {
+            authorization: `Bearer ${owner.token}`,
+            host: "coopguard-example.onrender.com",
+          },
+        });
+        const onlineTechnicianRequest = await app.inject({
+          method: "GET",
+          url: `/v1/farms/${otherFarm}`,
+          headers: {
+            authorization: `Bearer ${tech.token}`,
+            host: "coopguard-example.onrender.com",
+          },
+        });
+        assert.equal(onlineOwnerRequest.statusCode, 403);
+        assert.equal(onlineTechnicianRequest.statusCode, 200);
+        assert.equal(owner.farms.length, 1);
+        const technicianIdentity = await send("GET", "/v1/me", tech.token);
+        assert.equal(technicianIdentity.statusCode, 200);
+        assert.equal(technicianIdentity.json<Session>().farms.length, 2);
+        const ownerIdentity = await send("GET", "/v1/me", owner.token);
+        assert.equal(ownerIdentity.statusCode, 200);
+        assert.deepEqual(
+          ownerIdentity.json<Session>().farms.map((farm) => farm.id),
+          [farm],
+        );
+        await db
+          .prepare("INSERT INTO memberships(user_id,farm_id) VALUES(?,?)")
+          .run("owner", otherFarm);
+        assert.equal((await send("GET", route, owner.token)).statusCode, 403);
+        assert.equal(
+          (await send("GET", "/v1/me", owner.token)).json<Session>().farms
+            .length,
+          0,
+        );
+        await db
+          .prepare("DELETE FROM memberships WHERE user_id=? AND farm_id=?")
+          .run("owner", otherFarm);
         assert.equal(
           (
             await mutate(owner.token, {

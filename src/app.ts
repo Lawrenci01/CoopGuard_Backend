@@ -122,9 +122,17 @@ export async function createApp(
           ? []
           : ((await db
               .prepare(
-                "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
+                user.role === "technician"
+                  ? "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id ORDER BY f.name"
+                  : user.role === "owner"
+                    ? "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? AND (SELECT COUNT(*) FROM memberships own_m WHERE own_m.user_id=m.user_id)=1 ORDER BY f.name"
+                    : "SELECT f.id,f.name,c.code FROM farms f JOIN farm_codes c ON c.farm_id=f.id JOIN memberships m ON m.farm_id=f.id WHERE m.user_id=? ORDER BY f.name",
               )
-              .all(user.id)) as { id: string; name: string; code: string }[]),
+              .all(...(user.role === "technician" ? [] : [user.id]))) as {
+              id: string;
+              name: string;
+              code: string;
+            }[]),
     };
   }
   async function issue(user: User): Promise<Session> {
@@ -163,14 +171,22 @@ export async function createApp(
   ) {
     const user = await account(request);
     const farmId = (request.params as { farmId?: string }).farmId;
-    if (
-      !farmId ||
-      !roles.includes(user.role) ||
-      !(await db
-        .prepare("SELECT 1 FROM memberships WHERE user_id=? AND farm_id=?")
-        .get(user.id, farmId))
-    )
+    if (!farmId || !roles.includes(user.role))
       fail(403, "You do not have access to this action or farm.");
+    if (user.role !== "technician") {
+      const membership = await db
+        .prepare("SELECT 1 FROM memberships WHERE user_id=? AND farm_id=?")
+        .get(user.id, farmId);
+      if (!membership)
+        fail(403, "You do not have access to this action or farm.");
+      if (user.role === "owner") {
+        const result = await db
+          .prepare("SELECT COUNT(*) AS count FROM memberships WHERE user_id=?")
+          .get(user.id);
+        if (Number(result?.count) !== 1)
+          fail(403, "Owner accounts can only be assigned to one farm.");
+      }
+    }
     return { user, farmId };
   }
   async function row(farmId: string) {
@@ -254,7 +270,7 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.6.2",
+    version: "0.6.3",
     readings: "sample",
     mode: options.deploymentMode ?? "standalone",
     ...(options.deploymentMode === "hub" && options.hubId
@@ -351,8 +367,7 @@ export async function createApp(
   );
   app.post("/v1/admin/farms", async (request) => {
     const user = await account(request, false);
-    if (user.role !== "admin")
-      fail(403, "Only a team admin can create farms.");
+    if (user.role !== "admin") fail(403, "Only a team admin can create farms.");
     const body = parse(
       z
         .object({
@@ -363,22 +378,21 @@ export async function createApp(
           address: z.string().trim().min(1).max(200).optional(),
           ownerUsername: username,
           ownerName: name,
-          technicianUsername: username,
-          technicianName: name,
         })
         .strict(),
       request.body,
     );
-    const ownerUsername = body.ownerUsername,
-      technicianUsername = body.technicianUsername;
-    if (ownerUsername === technicianUsername)
-      fail(400, "Use separate usernames for the owner and technician.");
-    for (const username of [ownerUsername, technicianUsername]) {
-      if (await db.prepare("SELECT 1 FROM users WHERE username=?").get(username))
-        fail(409, "This username is unavailable. Choose a unique account name.");
-    }
-    const ownerPassword = temporaryPassword(),
-      technicianPassword = temporaryPassword();
+    const ownerUsername = body.ownerUsername;
+    if (
+      await db
+        .prepare("SELECT 1 FROM users WHERE username=?")
+        .get(ownerUsername)
+    )
+      fail(
+        409,
+        "This owner username is unavailable. Choose a unique account name.",
+      );
+    const ownerPassword = temporaryPassword();
     const farmId = await createFarm(db, body.farmName, now(), {
       customerName: body.customerName,
       contactName: body.contactName,
@@ -389,26 +403,16 @@ export async function createApp(
       .prepare("SELECT code FROM farm_codes WHERE farm_id=?")
       .get(farmId)) as { code: string } | undefined;
     if (!farmCode) fail(500, "Farm code generation failed.");
-    const ownerHash = await hashPassword(ownerPassword),
-      technicianHash = await hashPassword(technicianPassword);
-    const ownerUserId = randomUUID(),
-      technicianUserId = randomUUID();
+    const ownerHash = await hashPassword(ownerPassword);
+    const ownerUserId = randomUUID();
     await db.batch([
       {
         sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'owner',?,?)",
         args: [ownerUserId, ownerUsername, body.ownerName, ownerHash, now()],
       },
       {
-        sql: "INSERT INTO users(id,username,name,role,password_hash,created_at) VALUES(?,?,?,'technician',?,?)",
-        args: [technicianUserId, technicianUsername, body.technicianName, technicianHash, now()],
-      },
-      {
         sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
         args: [ownerUserId, farmId],
-      },
-      {
-        sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
-        args: [technicianUserId, farmId],
       },
       auditStatement(user, farmId, "farm_created", farmId),
     ]);
@@ -420,11 +424,6 @@ export async function createApp(
         username: ownerUsername,
         name: body.ownerName,
         password: ownerPassword,
-      },
-      technician: {
-        username: technicianUsername,
-        name: body.technicianName,
-        password: technicianPassword,
       },
     };
   });
