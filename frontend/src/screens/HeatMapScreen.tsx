@@ -10,7 +10,7 @@ import { SensorSheet } from '../components/FarmSheets';
 import { enabledMetrics } from '../domain/siteWorkflow';
 
 export function HeatMapScreen() {
-  const { snapshot, data } = useFarm();
+  const { snapshot, data, readingSource } = useFarm();
   const [selectedMetric, setMetric] = useState<MetricKey>('temperature'),
     [sensor, setSensor] = useState<Sensor | null>(null);
   const metrics = enabledMetrics(data.site);
@@ -26,7 +26,8 @@ export function HeatMapScreen() {
       />
       <Card style={{ padding: 16, gap: 16 }}>
         <Label style={{ fontSize: 12, color: colors.muted }}>
-          Simulated node locations · Tap a node for its readings.
+          {readingSource === 'telemetry' ? 'Installed node locations' : 'Simulated node locations'}{' '}
+          ? Tap a node for its readings.
         </Label>
         <FloorPlan sensors={snapshot.sensors} metric={metric} onSelect={setSensor} />
       </Card>

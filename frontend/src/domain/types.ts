@@ -2,7 +2,7 @@ export type TabName = 'Dashboard' | 'Alerts' | 'Heat Map' | 'Analytics' | 'Devic
 export type ConnectionMode = 'local' | 'cloud' | 'offline';
 export type Role = 'owner' | 'worker' | 'technician' | 'admin';
 export type ControlMode = 'full' | 'monitor';
-export type Condition = 'good' | 'watch' | 'urgent' | 'unavailable';
+export type Condition = 'good' | 'watch' | 'urgent' | 'unavailable' | 'unclassified';
 export type MetricKey = 'temperature' | 'humidity' | 'ammonia' | 'co2' | 'moisture';
 export type Section = 'A' | 'B' | 'C';
 
@@ -22,7 +22,7 @@ export interface Sensor {
 
 export interface FarmAlert {
   id: string;
-  titleKey: 'heatAlert' | 'sensorAlert' | 'resolvedAlert';
+  titleKey: 'heatAlert' | 'sensorAlert' | 'sensorCheckAlert' | 'resolvedAlert';
   section: Section;
   severity: 'warning' | 'info';
   status: 'active' | 'acknowledged' | 'resolved';

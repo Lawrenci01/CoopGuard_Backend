@@ -66,7 +66,9 @@ export function AlertsScreen() {
               ? `Check the fans and airflow in Section ${alert.section}.`
               : alert.titleKey === 'sensorAlert'
                 ? 'Check the sensor’s power and position.'
-                : 'The reported condition returned to its usual range.'}
+                : alert.titleKey === 'sensorCheckAlert'
+                  ? 'Wait for warm-up or ask a technician to check calibration and sensor validity.'
+                  : 'The reported condition returned to its usual range.'}
           </Label>
           <View style={[styles.row, { flexWrap: 'wrap' }]}>
             {alert.status !== 'resolved' && (
@@ -109,7 +111,9 @@ export function AlertsScreen() {
                 ? en.heatWhy
                 : detail.titleKey === 'sensorAlert'
                   ? en.sensorWhy
-                  : en.resolvedWhy}
+                  : detail.titleKey === 'sensorCheckAlert'
+                    ? en.sensorCheckWhy
+                    : en.resolvedWhy}
             </Label>
             {detail.status === 'acknowledged' && (
               <Label>

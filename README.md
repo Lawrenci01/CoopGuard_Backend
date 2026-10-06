@@ -13,7 +13,7 @@ The components share one repository so changes to their interfaces can be review
 
 ## Android mobile app
 
-The native React Native/TypeScript app now has real shared username/password accounts, role-specific screens, offline cached records, inspection-note synchronization, automatic paired-hub/cloud selection, and a technician workflow from site survey through installation, commissioning, monitoring trial and activation. The Node.js/TypeScript backend is live on Render/Turso and has a Pi hub mode backed by a synchronized local database. Sensor readings and equipment responses are still dummy data.
+The native React Native/TypeScript app now has real shared username/password accounts, role-specific screens, offline cached records, inspection-note synchronization, automatic paired-hub/cloud selection, and a technician workflow from site survey through installation, commissioning, monitoring trial and activation. The Node.js/TypeScript backend is live on Render/Turso and has a Pi hub mode backed by a synchronized local database. Version 0.7 adds an authenticated telemetry boundary, normalized live reading history, replay protection, stale/invalid sensor alerts, and a JavaScript gateway simulator with an offline retry queue. Equipment responses, LoRa radio transport, and physical sensors remain simulated or unimplemented.
 
 ```powershell
 cd backend
@@ -25,7 +25,7 @@ $env:EXPO_PUBLIC_API_URL = 'https://YOUR-RENDER-SERVICE.onrender.com'
 npm run build:android
 ```
 
-Install `frontend/dist/android/CoopGuard.apk`, then sign in with a provisioned account. The team creates owners/technicians; owners create only workers. Render works through any internet connection; a commissioned hub works over farm WiFi without internet; a phone with neither uses bounded cached access. See the [frontend guide](frontend/README.md) for installation, roles, old-phone-record import and offline behavior. Real readings, equipment, physical Pi commissioning and AI inference still require their services.
+Install `frontend/dist/android/CoopGuard.apk`, then sign in with a provisioned account. The team creates owners/technicians; owners create only workers. Render works through any internet connection; a commissioned hub works over farm WiFi without internet; a phone with neither uses bounded cached access. See the [frontend guide](frontend/README.md) for installation, roles, old-phone-record import and offline behavior. The simulator can exercise the live data path before physical nodes exist; equipment control, physical Pi/radio commissioning and AI inference still require their services.
 
 ## Working documents
 

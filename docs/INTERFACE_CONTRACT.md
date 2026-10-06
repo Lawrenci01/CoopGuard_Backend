@@ -1,6 +1,12 @@
 # End-to-end interface contract
 
-Updated: 2026-09-30. Status: planning contract, not final byte-level LoRa payload or OpenAPI schema. The mesh stack, exact field types, and endpoint shapes must be finalized before code is integrated. The JavaScript/Python split follows [the edge AI replan](EDGE_AI_REPLAN.md); TypeScript and Pi-hosted inference are the recommended implementation.
+Updated: 2026-10-06. Status: the HTTP gateway-to-backend telemetry envelope is implemented for simulator integration. The byte-level LoRa payload, mesh stack, node cryptography and physical radio adapter remain open. The JavaScript/Python split follows [the edge AI replan](EDGE_AI_REPLAN.md); TypeScript and Pi-hosted inference are the recommended implementation.
+
+## Implemented gateway boundary
+
+`POST /v1/telemetry/ingest` accepts schema version 1 batches from a provisioned hub. Each full-sensor reading carries a UUID message identity, node sequence, UTC sample time, section, five measurements, calibration/warm-up/validity flags, power/radio health, and firmware/configuration versions. The request uses a per-hub secret whose SHA-256 digest is stored in the application database. Farm, hub and node bindings are checked server-side. Stable message identity and node sequence prevent a retry or replay from creating another stored reading.
+
+The backend owns `sensor_readings`; the gateway does not write database tables. Authorized app accounts can use latest and bounded history endpoints. Until an approved farm threshold profile exists, valid telemetry is displayed as `Reading only` and does not produce a poultry-condition classification. Stale, warming, invalid or uncalibrated telemetry can produce technical sensor alerts. The simulator's local queue demonstrates retry behavior; final radio-buffer limits and physical gateway durability still require Pi testing.
 
 ## Boundaries
 

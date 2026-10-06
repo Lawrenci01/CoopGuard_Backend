@@ -41,7 +41,8 @@ export function FloorPlan({
                       ? 'red'
                       : summary.condition === 'watch'
                         ? 'amber'
-                        : summary.condition === 'unavailable'
+                        : summary.condition === 'unavailable' ||
+                            summary.condition === 'unclassified'
                           ? 'muted'
                           : 'green'
                   }
@@ -190,6 +191,11 @@ export function FloorPlan({
         <Chip tone="muted" dot>
           {en.statuses.unavailable}
         </Chip>
+        {sensors.some((s) => s.online && s.conditions[metric] === 'unclassified') && (
+          <Chip tone="muted" dot>
+            {en.statuses.unclassified}
+          </Chip>
+        )}
       </View>
     </View>
   );

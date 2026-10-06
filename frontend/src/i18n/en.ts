@@ -129,7 +129,13 @@ export const en = {
     co2: 'Carbon dioxide',
     moisture: 'Litter moisture',
   },
-  statuses: { good: 'Good', watch: 'Watch', urgent: 'Urgent', unavailable: 'No signal' },
+  statuses: {
+    good: 'Good',
+    watch: 'Watch',
+    urgent: 'Urgent',
+    unavailable: 'No signal',
+    unclassified: 'Reading only',
+  },
   conditions: 'House conditions',
   conditionsNote: 'From 11 reporting sensors',
   houseSummary: 'Mostly comfortable. One spot to check.',
@@ -152,11 +158,14 @@ export const en = {
   attention: 'A heads-up for your house',
   heatAlert: 'Section B is getting warm',
   sensorAlert: 'One sensor has lost connection',
+  sensorCheckAlert: 'One sensor needs a check',
   resolvedAlert: 'Humidity returned to normal',
   heatWhy:
     'The latest reading in Section B is warmer than the rest of the house. Check airflow and look at how the birds are behaving.',
   sensorWhy:
     'Sensor 11 has not sent a reading recently. Check its power and position. Other sensors are still reporting.',
+  sensorCheckWhy:
+    'The node reported that its sensors are warming up, invalid, or not yet calibrated. Do not use its values for a safety decision.',
   resolvedWhy:
     'Humidity in Section A returned to its usual range and stayed there for ten minutes.',
   actionTaken: 'What the system reported',

@@ -38,6 +38,7 @@ interface FarmContextValue extends Pick<
   lastSyncedAt: number;
   pendingCount: number;
   revision: number;
+  readingSource: 'sample' | 'telemetry';
   retryLoad: () => Promise<void>;
   refresh: () => Promise<void>;
   perform: (action: LocalAction, message?: string) => Promise<boolean>;
@@ -307,6 +308,7 @@ export function FarmProvider({ children }: React.PropsWithChildren) {
     lastSyncedAt: cache?.syncedAt ?? 0,
     pendingCount: cache?.pending.length ?? 0,
     revision: cache?.revision ?? 0,
+    readingSource: cache?.readings ?? 'sample',
     hasLegacy,
     notify,
     perform,

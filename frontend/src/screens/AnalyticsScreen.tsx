@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { en } from '../i18n/en';
 import { colors } from '../theme';
@@ -9,30 +9,106 @@ import { AIInsights } from '../components/AIInsights';
 import { ScreenFrame } from '../components/ScreenFrame';
 import { TrendChart } from '../components/TrendChart';
 import { useFarm } from '../state/FarmProvider';
+import { useAuth } from '../state/AuthProvider';
 import { enabledMetrics } from '../domain/siteWorkflow';
 import { simulatedNodeTrend } from '../domain/readings';
+import { api } from '../services/api';
 
 export function AnalyticsScreen() {
-  const { data, snapshot } = useFarm();
+  const { data, snapshot, readingSource } = useFarm();
+  const auth = useAuth();
   const [selectedMetric, setMetric] = useState<MetricKey>('temperature'),
     [range, setRange] = useState('today');
+  const [liveHistory, setLiveHistory] = useState<{ sampledAt: number; value: number }[]>([]);
   const metrics = enabledMetrics(data.site).filter(
-    (metric): metric is Exclude<MetricKey, 'moisture'> => metric !== 'moisture',
+    (value): value is Exclude<MetricKey, 'moisture'> => value !== 'moisture',
   );
   const metric = metrics.find((value) => value === selectedMetric) ?? metrics[0]!;
-  const wholeHouseSeries = simulatedNodeTrend(snapshot.sensors, metric, trendValues[metric]);
+  const windowMs =
+    range === 'today' ? 86_400_000 : range === 'week' ? 7 * 86_400_000 : 30 * 86_400_000;
+  const sensorKey = snapshot.sensors
+    .map((sensor) => sensor.id)
+    .sort()
+    .join(',');
+
+  useEffect(() => {
+    let active = true;
+    if (readingSource !== 'telemetry' || !auth.record) {
+      setLiveHistory([]);
+      return () => {
+        active = false;
+      };
+    }
+    const end = Date.now();
+    void Promise.all(
+      snapshot.sensors.map((sensor) =>
+        api.telemetryHistory(
+          auth.server,
+          auth.record!.session.token,
+          auth.record!.farmId,
+          sensor.id,
+          metric,
+          end - windowMs,
+          end,
+        ),
+      ),
+    )
+      .then((responses) => {
+        if (!active) return;
+        const buckets = new Map<number, number[]>();
+        for (const point of responses.flatMap((response) => response.points)) {
+          const minute = Math.floor(point.sampledAt / 60_000) * 60_000;
+          const values = buckets.get(minute) ?? [];
+          values.push(point.value);
+          buckets.set(minute, values);
+        }
+        setLiveHistory(
+          [...buckets]
+            .sort(([a], [b]) => a - b)
+            .map(([sampledAt, values]) => ({
+              sampledAt,
+              value: values.reduce((sum, value) => sum + value, 0) / values.length,
+            }))
+            .slice(-40),
+        );
+      })
+      .catch(() => {
+        if (active) setLiveHistory([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.record, auth.server, metric, readingSource, sensorKey, windowMs]);
+
+  const sampleSeries = simulatedNodeTrend(snapshot.sensors, metric, trendValues[metric]);
+  const sampleRange =
+    range === 'today'
+      ? sampleSeries
+      : range === 'week'
+        ? sampleSeries.filter((_, index) => index % 3 === 0)
+        : [...sampleSeries].reverse();
   const series =
-    range === 'today'
-      ? wholeHouseSeries
-      : range === 'week'
-        ? wholeHouseSeries.filter((_, i) => i % 3 === 0)
-        : [...wholeHouseSeries].reverse();
+    readingSource === 'telemetry' ? liveHistory.map((point) => point.value) : sampleRange;
   const labels =
-    range === 'today'
-      ? en.chartLabels.today
-      : range === 'week'
-        ? en.chartLabels.week
-        : en.chartLabels.month;
+    readingSource === 'telemetry'
+      ? liveHistory.length > 1
+        ? [
+            new Date(liveHistory[0]!.sampledAt).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            }),
+            new Date(liveHistory[liveHistory.length - 1]!.sampledAt).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            }),
+          ]
+        : ['First reading', 'More soon']
+      : range === 'today'
+        ? en.chartLabels.today
+        : range === 'week'
+          ? en.chartLabels.week
+          : en.chartLabels.month;
+
   return (
     <ScreenFrame
       tab="Analytics"
@@ -58,7 +134,8 @@ export function AnalyticsScreen() {
               </Label>
               <Label style={{ color: colors.muted, fontSize: 12 }}>
                 Whole-house average · {snapshot.sensors.filter((sensor) => sensor.online).length}{' '}
-                reporting nodes · simulated history
+                reporting nodes ·{' '}
+                {readingSource === 'telemetry' ? 'stored telemetry' : 'simulated history'}
               </Label>
             </View>
             <View style={{ minHeight: 230 }}>
@@ -67,7 +144,9 @@ export function AnalyticsScreen() {
           </>
         ) : (
           <Label style={{ paddingVertical: 24, color: colors.muted }}>
-            No node readings are available for this farm yet.
+            {readingSource === 'telemetry'
+              ? 'Live history will appear as node readings are stored.'
+              : 'No node readings are available for this farm yet.'}
           </Label>
         )}
       </Card>

@@ -24,6 +24,7 @@ export interface Session extends Identity {
 export interface FarmResponse {
   state: LocalFarmState;
   revision: number;
+  readings?: 'sample' | 'telemetry';
 }
 export interface WorkerAccount {
   id: string;

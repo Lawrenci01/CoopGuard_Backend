@@ -17,7 +17,9 @@ export function summarizeReadings(sensors: Sensor[], metric: MetricKey) {
           !reporting.length ||
           conditions.includes('unavailable')
         ? 'unavailable'
-        : 'good';
+        : conditions.includes('unclassified')
+          ? 'unclassified'
+          : 'good';
   return { value, condition, reporting: reporting.length, total: sensors.length };
 }
 

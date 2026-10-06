@@ -51,7 +51,7 @@ export function validSnapshot(value: unknown): value is FarmSnapshot {
       metrics.every(
         (metric) =>
           finite((sensor.readings as Record<string, unknown>)[metric]) &&
-          ['good', 'watch', 'urgent', 'unavailable'].includes(
+          ['good', 'watch', 'urgent', 'unavailable', 'unclassified'].includes(
             String((sensor.conditions as Record<string, unknown>)[metric]),
           ),
       ),
@@ -61,7 +61,9 @@ export function validSnapshot(value: unknown): value is FarmSnapshot {
       record(alert) &&
       typeof alert.id === 'string' &&
       typeof alert.sensorId === 'string' &&
-      ['heatAlert', 'sensorAlert', 'resolvedAlert'].includes(String(alert.titleKey)) &&
+      ['heatAlert', 'sensorAlert', 'sensorCheckAlert', 'resolvedAlert'].includes(
+        String(alert.titleKey),
+      ) &&
       ['A', 'B', 'C'].includes(String(alert.section)) &&
       ['warning', 'info'].includes(String(alert.severity)) &&
       ['active', 'acknowledged', 'resolved'].includes(String(alert.status)) &&

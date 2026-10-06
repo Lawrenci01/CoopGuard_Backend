@@ -16,6 +16,14 @@ import { surveyRecommendation } from "./shared/domain/setup";
 import type { Role } from "./shared/domain/types";
 import type { FarmResponse, Identity, Session } from "./apiTypes";
 import { createFarm, type BatchStatement, type CoopDatabase } from "./database";
+import {
+  applyTelemetryToState,
+  latestTelemetry,
+  readingInsert,
+  telemetryBatchSchema,
+  telemetryHistory,
+  validTelemetrySecret,
+} from "./telemetry";
 
 type User = {
   id: string;
@@ -211,7 +219,10 @@ export async function createApp(
       },
       now,
     );
-    const state = await repo.load();
+    let state = await repo.load();
+    const telemetry = await latestTelemetry(db, farmId);
+    const hasTelemetry = telemetry.some((node) => node.readings !== null);
+    state = await applyTelemetryToState(db, farmId, state, now(), telemetry);
     // Cache reads do not refresh sensor timestamps or replay commands.
     state.context = {
       ...state.context,
@@ -219,7 +230,11 @@ export async function createApp(
       connection: requestConnection(request),
     };
     state.started = true;
-    return { state, revision: farm.revision };
+    return {
+      state,
+      revision: farm.revision,
+      readings: hasTelemetry ? "telemetry" : "sample",
+    };
   }
   const workers = async (farmId: string) =>
     (
@@ -270,14 +285,151 @@ export async function createApp(
   });
   app.get("/health", async () => ({
     service: "CoopGuard",
-    version: "0.6.3",
-    readings: "sample",
+    version: "0.7.0",
+    readings: "live-or-sample",
     mode: options.deploymentMode ?? "standalone",
     ...(options.deploymentMode === "hub" && options.hubId
       ? { hubId: options.hubId }
       : {}),
     ...(db.syncState ? { sync: await db.syncState() } : {}),
   }));
+  app.post(
+    "/v1/telemetry/ingest",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    (request) =>
+      serial(async () => {
+        const hubIdHeader = request.headers["x-coopguard-hub-id"],
+          secretHeader = request.headers["x-coopguard-hub-token"];
+        const hubId = Array.isArray(hubIdHeader) ? hubIdHeader[0] : hubIdHeader;
+        const secret = Array.isArray(secretHeader) ? secretHeader[0] : secretHeader;
+        if (!hubId || !secret || secret.length < 32 || secret.length > 256)
+          fail(401, "Valid hub credentials are required.");
+        const hub = (await db
+          .prepare(
+            `SELECT h.id,h.farm_id,h.secret_digest,c.code
+             FROM telemetry_hubs h JOIN farm_codes c ON c.farm_id=h.farm_id
+             WHERE h.id=? AND h.active=1`,
+          )
+          .get(hubId)) as
+          | { id: string; farm_id: string; secret_digest: string; code: string }
+          | undefined;
+        if (!hub || !validTelemetrySecret(secret, hub.secret_digest))
+          fail(401, "Valid hub credentials are required.");
+        const body = parse(telemetryBatchSchema, request.body);
+        if (body.hubId !== hub.id || body.farmCode !== hub.code)
+          fail(403, "This telemetry packet is bound to a different hub or farm.");
+        const receivedAt = now();
+        if (Date.parse(body.sentAt) > receivedAt + 5 * 60_000)
+          fail(400, "The gateway time is too far in the future.");
+        const registered = (await db
+          .prepare(
+            "SELECT id,section FROM telemetry_nodes WHERE hub_id=? AND farm_id=? AND active=1",
+          )
+          .all(hub.id, hub.farm_id)) as { id: string; section: string }[];
+        const nodes = new Map(registered.map((node) => [node.id, node.section]));
+        const messagePlaceholders = body.readings.map(() => "?").join(",");
+        const sequencePredicates = body.readings
+          .map(() => "(node_id=? AND sequence=?)")
+          .join(" OR ");
+        const existingRows = (await db
+          .prepare(
+            `SELECT message_id,sequence,node_id FROM sensor_readings
+             WHERE hub_id=? AND (message_id IN (${messagePlaceholders}) OR ${sequencePredicates})`,
+          )
+          .all(
+            hub.id,
+            ...body.readings.map((reading) => reading.messageId),
+            ...body.readings.flatMap((reading) => [reading.nodeId, reading.sequence]),
+          )) as { message_id: string; sequence: number; node_id: string }[];
+        const existingMessages = new Map(
+          existingRows.map((reading) => [reading.message_id, reading]),
+        );
+        const existingSequences = new Map(
+          existingRows.map((reading) => [
+            `${reading.node_id}:${Number(reading.sequence)}`,
+            reading,
+          ]),
+        );
+        const maximumRows = (await db
+          .prepare(
+            "SELECT node_id,MAX(sequence) maximum FROM sensor_readings WHERE hub_id=? GROUP BY node_id",
+          )
+          .all(hub.id)) as { node_id: string; maximum: number }[];
+        const accepted: typeof body.readings = [],
+          rejected: { messageId: string; reason: string }[] = [];
+        let duplicates = 0;
+        const maxSequences = new Map(
+          maximumRows.map((row) => [row.node_id, Number(row.maximum)]),
+        );
+        const batchMessages = new Map<string, string>();
+        const batchSequences = new Map<string, string>();
+        for (const reading of body.readings) {
+          const identity = `${reading.nodeId}:${reading.sequence}`;
+          const sequenceKey = `${reading.nodeId}:${reading.sequence}`;
+          const messageIdentity = batchMessages.get(reading.messageId);
+          const sequenceMessage = batchSequences.get(sequenceKey);
+          if (messageIdentity !== undefined || sequenceMessage !== undefined) {
+            if (messageIdentity === identity && sequenceMessage === reading.messageId)
+              duplicates += 1;
+            else
+              rejected.push({ messageId: reading.messageId, reason: "identity_conflict" });
+            continue;
+          }
+          if (!nodes.has(reading.nodeId)) {
+            rejected.push({ messageId: reading.messageId, reason: "node_not_registered" });
+            continue;
+          }
+          if (nodes.get(reading.nodeId) !== reading.section) {
+            rejected.push({ messageId: reading.messageId, reason: "section_mismatch" });
+            continue;
+          }
+          const sampledAt = Date.parse(reading.sampledAt);
+          if (sampledAt > receivedAt + 5 * 60_000) {
+            rejected.push({ messageId: reading.messageId, reason: "sample_time_in_future" });
+            continue;
+          }
+          const existingMessage = existingMessages.get(reading.messageId);
+          const existingSequence = existingSequences.get(sequenceKey);
+          if (existingMessage || existingSequence) {
+            if (
+              existingMessage?.message_id === reading.messageId &&
+              existingMessage.node_id === reading.nodeId &&
+              Number(existingMessage.sequence) === reading.sequence &&
+              existingSequence?.message_id === reading.messageId
+            )
+              duplicates += 1;
+            else
+              rejected.push({ messageId: reading.messageId, reason: "identity_conflict" });
+            continue;
+          }
+          const maximum = maxSequences.get(reading.nodeId) ?? -1;
+          if (reading.sequence <= maximum) {
+            rejected.push({ messageId: reading.messageId, reason: "sequence_replayed" });
+            continue;
+          }
+          maxSequences.set(reading.nodeId, reading.sequence);
+          batchMessages.set(reading.messageId, identity);
+          batchSequences.set(sequenceKey, reading.messageId);
+          accepted.push(reading);
+        }
+        if (accepted.length)
+          await db.batch([
+            ...accepted.map((reading) =>
+              readingInsert(hub.farm_id, hub.id, reading, receivedAt),
+            ),
+            {
+              sql: "UPDATE telemetry_hubs SET last_seen_at=? WHERE id=?",
+              args: [receivedAt, hub.id],
+            },
+          ]);
+        return {
+          accepted: accepted.length,
+          duplicates,
+          rejected,
+          serverReceivedAt: new Date(receivedAt).toISOString(),
+        };
+      }),
+  );
   app.post(
     "/v1/auth/login",
     { config: { rateLimit: { max: 12, timeWindow: "1 minute" } } },
@@ -433,6 +585,44 @@ export async function createApp(
       return readFarm(farmId, user, request);
     }),
   );
+  app.get("/v1/farms/:farmId/telemetry/latest", async (request) => {
+    const { farmId } = await access(request);
+    return {
+      thresholdProfile: null,
+      classification: "reading_only",
+      staleAfterSeconds: 180,
+      nodes: await latestTelemetry(db, farmId),
+    };
+  });
+  app.get("/v1/farms/:farmId/telemetry/history", async (request) => {
+    const { farmId } = await access(request);
+    const query = parse(
+      z
+        .object({
+          nodeId: z.string().trim().min(3).max(64),
+          metric: z.enum(["temperature", "humidity", "ammonia", "co2", "moisture"]),
+          from: z.coerce.number().int().nonnegative(),
+          to: z.coerce.number().int().positive(),
+          limit: z.coerce.number().int().min(1).max(1000).default(500),
+        })
+        .strict(),
+      request.query,
+    );
+    if (query.from > query.to) fail(400, "The history start must be before its end.");
+    return {
+      nodeId: query.nodeId,
+      metric: query.metric,
+      points: await telemetryHistory(
+        db,
+        farmId,
+        query.nodeId,
+        query.metric,
+        query.from,
+        query.to,
+        query.limit,
+      ),
+    };
+  });
   app.post("/v1/farms/:farmId/actions", (request) =>
     serial(async () => {
       const { user, farmId } = await access(request),
@@ -489,7 +679,12 @@ export async function createApp(
         return readFarm(farmId, user, request);
       }
       const farm = await row(farmId),
-        before = JSON.parse(farm.state) as LocalFarmState;
+        before = await applyTelemetryToState(
+          db,
+          farmId,
+          JSON.parse(farm.state) as LocalFarmState,
+          now(),
+        );
       const appendNote = action.type === "saveInspection" && !action.id;
       if (
         !appendNote &&
@@ -508,7 +703,7 @@ export async function createApp(
         if (!note || (user.role !== "owner" && note.authorId !== user.id))
           fail(403, "You can only change your own inspection notes.");
       }
-      let saved = farm.state;
+      let saved = JSON.stringify(before);
       const repo = new LocalFarmRepository(
         {
           getItem: async () => saved,
@@ -551,7 +746,7 @@ export async function createApp(
         },
         auditStatement(user, farmId, action.type),
       ]);
-      return { state, revision: farm.revision + 1 };
+      return readFarm(farmId, user, request);
     }),
   );
   app.post("/v1/farms/:farmId/import", (request) =>
@@ -592,7 +787,7 @@ export async function createApp(
         .prepare("UPDATE farms SET state=?,revision=1 WHERE id=?")
         .run(JSON.stringify(state), farmId);
       await audit(user, farmId, "phone_records_imported");
-      return { state, revision: 1 };
+      return { state, revision: 1, readings: "sample" };
     }),
   );
   app.get("/v1/farms/:farmId/workers", async (request) => {

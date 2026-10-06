@@ -75,6 +75,9 @@ test("fresh-start reset keeps only administrators and cg.technician", async (t) 
     ["cg.technician", "team.admin"],
   );
   for (const table of [
+    "sensor_readings",
+    "telemetry_nodes",
+    "telemetry_hubs",
     "farms",
     "farm_codes",
     "memberships",

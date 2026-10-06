@@ -23,5 +23,7 @@ export function houseAttention(snapshot: FarmSnapshot) {
   const watch = summaries.find((s) => s.condition === 'watch');
   if (watch) return { kind: 'reading' as const, metric: watch.metric };
   if (summaries.some((s) => s.condition === 'unavailable')) return { kind: 'incomplete' as const };
+  if (summaries.some((s) => s.condition === 'unclassified'))
+    return { kind: 'unclassified' as const };
   return { kind: 'clear' as const };
 }

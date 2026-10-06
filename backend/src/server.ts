@@ -31,7 +31,7 @@ const app = await createApp(db, {
 const port = Number(process.env.PORT ?? 8443);
 const address = await app.listen({ host: process.env.HOST ?? "0.0.0.0", port });
 console.log(
-  `CoopGuard API listening at ${address}${useHttps ? " with origin TLS" : " behind a trusted TLS proxy"}. Farm readings are samples; accounts and saved records use SQLite.`,
+  `CoopGuard API listening at ${address}${useHttps ? " with origin TLS" : " behind a trusted TLS proxy"}. Authenticated telemetry is used after gateway provisioning; otherwise readings remain samples.`,
 );
 const syncTimer =
   deploymentMode === "hub" && db.sync

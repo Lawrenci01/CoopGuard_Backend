@@ -25,6 +25,18 @@ export interface HealthResponse {
   hubId?: string;
   sync?: { pendingOperations: number; lastPullAt: number; lastPushAt: number | null };
 }
+export interface TelemetryHistoryResponse {
+  nodeId: string;
+  metric: string;
+  points: {
+    id: string;
+    nodeId: string;
+    sampledAt: number;
+    receivedAt: number;
+    sequence: number;
+    value: number;
+  }[];
+}
 export function normalizeServer(value: string) {
   const url = new URL(value.trim());
   if (
@@ -99,6 +111,20 @@ export const api = {
   logout: (server: string, token: string) => apiRequest(server, '/v1/auth/logout', token, {}),
   farm: (server: string, token: string, farmId: string) =>
     apiRequest<FarmResponse>(server, `/v1/farms/${encodeURIComponent(farmId)}`, token),
+  telemetryHistory: (
+    server: string,
+    token: string,
+    farmId: string,
+    nodeId: string,
+    metric: string,
+    from: number,
+    to: number,
+  ) =>
+    apiRequest<TelemetryHistoryResponse>(
+      server,
+      `/v1/farms/${encodeURIComponent(farmId)}/telemetry/history?nodeId=${encodeURIComponent(nodeId)}&metric=${encodeURIComponent(metric)}&from=${from}&to=${to}&limit=1000`,
+      token,
+    ),
   mutate: (
     server: string,
     token: string,

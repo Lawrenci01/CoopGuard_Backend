@@ -32,7 +32,9 @@ export function DashboardScreen() {
         ? `Check ${en.metrics[attention.metric].toLowerCase()}`
         : attention.kind === 'incomplete'
           ? 'Some readings are missing'
-          : 'No active issues reported';
+          : attention.kind === 'unclassified'
+            ? 'Live readings received'
+            : 'No active issues reported';
   const body =
     attention.kind === 'alert'
       ? attention.alert.titleKey === 'heatAlert'
@@ -42,7 +44,9 @@ export function DashboardScreen() {
         ? 'Open the house map to see where to check.'
         : attention.kind === 'incomplete'
           ? 'Check the sensors before relying on the house average.'
-          : 'Keep checking the house during your usual rounds.';
+          : attention.kind === 'unclassified'
+            ? 'These values are for observation. A technician must approve the farm limits before CoopGuard labels them normal, watch, or urgent.'
+            : 'Keep checking the house during your usual rounds.';
   const reporting = snapshot.sensors.filter((s) => s.online).length;
   const overviewMetrics = enabledMetrics(data.site).slice(0, 2);
   return (

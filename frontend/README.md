@@ -1,6 +1,6 @@
 # CoopGuard mobile app
 
-Native React Native + TypeScript / Expo app, Android first. eersion **0.6.3** uses one username/password account across the Render cloud service and a commissioned farm hub. The app automatically prefers the paired hub over farm WiFi, falls back to Render on any internet connection, and uses its bounded cache when both are unavailable. It includes Farm IDs, a selection-based technician survey, virtual hub/node QR pairing, generated installation plans, commissioning, monitoring trial and activation. Sensor readings, charts, equipment responses and QR devices remain simulations. Python is reserved for the future AI service.
+Native React Native + TypeScript / Expo app, Android first. Version **0.7.0** uses one username/password account across the Render cloud service and a commissioned farm hub. The app automatically prefers the paired hub over farm WiFi, falls back to Render on any internet connection, and uses its bounded cache when both are unavailable. It includes Farm IDs, a selection-based technician survey, virtual hub/node QR pairing, generated installation plans, commissioning, monitoring trial and activation. The owner/worker interface switches from clearly marked samples to stored gateway telemetry after the first authenticated packet and uses real stored points in Trends. Equipment responses and QR devices remain simulations. Python is reserved for the future AI service.
 
 ## Install and sign in
 

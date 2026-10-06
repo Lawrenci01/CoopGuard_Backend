@@ -1,6 +1,6 @@
 # CoopGuard backend
 
-Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.6.1 uses Turso on Render Free, assigns each farm a unique Farm ID, stores the simulated QR device workflow, and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Sensors, history, equipment responses and virtual device heartbeats remain samples.
+Implemented **Node.js + TypeScript, Fastify and SQLite-compatible storage** service for real shared accounts and farm records. Version 0.7.0 uses Turso on Render Free, assigns each farm a unique Farm ID, stores the simulated QR device workflow, and supports a Pi hub with a local Turso Sync replica. The hub reads and writes locally during an outage, then pushes and pulls changes when internet returns. Authenticated telemetry ingestion, normalized sensor history, replay protection, stale/invalid sensor alerts, and latest/history APIs are implemented. Physical sensors, LoRa transport, equipment responses and virtual device heartbeats remain simulated or unimplemented.
 
 ## Deploy on Render
 
@@ -167,6 +167,9 @@ Local SQLite uses WAL, foreign keys and serialized farm mutations. Turso writes 
 | `POST /v1/auth/password`                                    | Current-password-verified change and session rotation      |
 | `POST /v1/admin/farms`                                      | Admin-only farm/customer and owner provisioning            |
 | `GET /v1/farms/:farmId`                                     | Authorized farm snapshot and revision                      |
+| `POST /v1/telemetry/ingest`                                 | Hub-authenticated versioned reading batch                  |
+| `GET /v1/farms/:farmId/telemetry/latest`                    | Latest normalized reading and node health                  |
+| `GET /v1/farms/:farmId/telemetry/history`                   | Bounded per-node metric history                            |
 | `POST /v1/farms/:farmId/actions`                            | Validated, authorized record mutation                      |
 | `POST /v1/farms/:farmId/import`                             | Technician's one-time legacy phone import                  |
 | `GET/POST /v1/farms/:farmId/workers`                        | Owner lists/creates workers                                |
@@ -182,4 +185,14 @@ Tests use Fastify injection and an isolated temporary SQLite database, including
 
 The backend-owned state rules and API types live under `src/shared`; the repository has no build-time or runtime dependency on the mobile frontend. Changes to these contracts must also be reflected in the mobile repository until a separately versioned shared package is introduced.
 
-Real ingestion, local control-rule processing, node acknowledgment, push delivery and Python model jobs remain unimplemented. The Node hub service now has the shared-account and database-sync foundation; physical Pi commissioning and conflict testing under simultaneous offline/cloud edits are still required. Python runs bounded AI jobs without blocking API requests. Historical FastAPI backend instructions are superseded by the JavaScript backend decision.
+Physical LoRa ingestion, local control-rule processing, node command acknowledgment, push delivery and Python model jobs remain unimplemented. The HTTP telemetry boundary is production-shaped but currently exercised by the JavaScript gateway simulator. Because site-specific alert thresholds are still an open safety decision, valid live values are labeled `Reading only`; the service generates technical stale/invalid/warm-up alerts without inventing poultry safety limits. Physical Pi commissioning and conflict testing under simultaneous offline/cloud edits are still required. Python runs bounded AI jobs without blocking API requests. Historical FastAPI backend instructions are superseded by the JavaScript backend decision.
+
+## Telemetry simulator setup
+
+The technician must first complete the site survey and pair the virtual hub and full-sensor nodes. Then create a one-time private hub configuration against the chosen database:
+
+```powershell
+npm run provision:telemetry -- --farm-code CG-PH-XXXXXXXX --output .local/pilot-gateway.json
+```
+
+Add `--require-cloud` after setting the Turso URL and token when provisioning the Render/Turso farm. The command stores only a digest of the generated hub secret. Run `hardware/gateway-simulator.mjs` from the monorepo to send one batch or continuous one-minute batches. Failed requests remain in a private spool beside the configuration and retry in order.

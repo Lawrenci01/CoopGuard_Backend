@@ -22,7 +22,7 @@ export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClos
       {sensor && (
         <View style={{ gap: 18 }}>
           {sensor.id.startsWith('NODE-') && (
-            <Label style={{ color: colors.muted }}>{sensor.id} · simulated full-sensor node</Label>
+            <Label style={{ color: colors.muted }}>{sensor.id} · full-sensor node</Label>
           )}
           <View style={styles.row}>
             <Chip tone={sensor.online ? 'green' : 'muted'} dot>

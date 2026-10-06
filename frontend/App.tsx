@@ -127,7 +127,8 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
   );
 }
 function Header({ onAccount }: { onAccount: () => void }) {
-  const { data, context, now, syncing, connected, lastSyncedAt, pendingCount } = useFarm(),
+  const { data, context, now, syncing, connected, lastSyncedAt, pendingCount, readingSource } =
+      useFarm(),
     auth = useAuth(),
     insets = useSafeAreaInsets();
   const r = auth.record!;
@@ -164,7 +165,13 @@ function Header({ onAccount }: { onAccount: () => void }) {
           onPress={onAccount}
           style={{ minHeight: 44, justifyContent: 'center', gap: 3 }}
         >
-          <Chip tone="muted">SAMPLE READINGS</Chip>
+          <Chip tone={readingSource === 'telemetry' ? 'green' : 'muted'}>
+            {readingSource === 'telemetry'
+              ? connected
+                ? 'TELEMETRY'
+                : 'SAVED TELEMETRY'
+              : 'SAMPLE READINGS'}
+          </Chip>
           <Label weight="medium" style={{ fontSize: 11, color: colors.green, textAlign: 'right' }}>
             {en.role[context.role]} · Account
           </Label>

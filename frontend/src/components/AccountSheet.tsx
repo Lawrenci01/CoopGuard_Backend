@@ -212,8 +212,10 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
             </>
           )}
           <Label style={{ fontSize: 12, color: colors.muted }}>
-            The same account is used by the cloud and the paired farm hub. Sensor readings and
-            equipment responses are still samples.
+            The same account is used by the cloud and the paired farm hub.
+            {farm.readingSource === 'telemetry'
+              ? ' Live history comes from the gateway. Equipment responses remain samples.'
+              : ' Sensor readings and equipment responses are still samples.'}
           </Label>
           <Button variant="ghost" onPress={() => setPassword(true)}>
             Change password

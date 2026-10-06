@@ -188,6 +188,37 @@ const schema = [
     event TEXT NOT NULL, target_id TEXT, at INTEGER NOT NULL
   )`,
   "CREATE TABLE IF NOT EXISTS login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, until_at INTEGER NOT NULL)",
+  `CREATE TABLE IF NOT EXISTS telemetry_hubs (
+    id TEXT PRIMARY KEY, farm_id TEXT NOT NULL REFERENCES farms(id),
+    secret_digest TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL, last_seen_at INTEGER
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS telemetry_hubs_farm ON telemetry_hubs(farm_id)",
+  `CREATE TABLE IF NOT EXISTS telemetry_nodes (
+    id TEXT PRIMARY KEY, farm_id TEXT NOT NULL REFERENCES farms(id),
+    hub_id TEXT NOT NULL REFERENCES telemetry_hubs(id), number TEXT NOT NULL,
+    section TEXT NOT NULL CHECK(section IN ('A','B','C')),
+    x REAL NOT NULL, y REAL NOT NULL, control INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS telemetry_nodes_farm ON telemetry_nodes(farm_id)",
+  `CREATE TABLE IF NOT EXISTS sensor_readings (
+    id TEXT PRIMARY KEY, message_id TEXT NOT NULL,
+    farm_id TEXT NOT NULL REFERENCES farms(id),
+    hub_id TEXT NOT NULL REFERENCES telemetry_hubs(id),
+    node_id TEXT NOT NULL REFERENCES telemetry_nodes(id),
+    sequence INTEGER NOT NULL, sampled_at INTEGER NOT NULL, received_at INTEGER NOT NULL,
+    temperature_c REAL NOT NULL, humidity_percent REAL NOT NULL,
+    ammonia_ppm REAL NOT NULL, co2_ppm REAL NOT NULL,
+    litter_moisture_percent REAL NOT NULL,
+    calibrated INTEGER NOT NULL, warming_up INTEGER NOT NULL,
+    sensors_valid INTEGER NOT NULL, battery_percent REAL,
+    rssi_dbm REAL NOT NULL, snr_db REAL NOT NULL,
+    firmware_version TEXT, config_version TEXT,
+    UNIQUE(hub_id,message_id), UNIQUE(node_id,sequence)
+  )`,
+  "CREATE INDEX IF NOT EXISTS sensor_readings_farm_time ON sensor_readings(farm_id,sampled_at DESC)",
+  "CREATE INDEX IF NOT EXISTS sensor_readings_node_time ON sensor_readings(node_id,sampled_at DESC)",
 ];
 
 async function migrateLegacyUsersTable(db: CoopDatabase) {

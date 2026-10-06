@@ -27,6 +27,7 @@ export function validFarmCache(value: unknown): value is FarmCache {
       validLocalFarm(v.state) &&
       Number.isInteger(v.revision) &&
       v.revision >= 0 &&
+      (v.readings === undefined || ['sample', 'telemetry'].includes(v.readings)) &&
       Number.isFinite(v.syncedAt) &&
       Array.isArray(v.pending) &&
       v.pending.length <= 1000 &&
