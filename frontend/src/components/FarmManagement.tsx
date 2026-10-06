@@ -88,7 +88,7 @@ export function FlockManager({ nextStep = false }: { nextStep?: boolean }) {
                 {data.flock.birds.toLocaleString()} birds · started {data.flock.startDate}
               </Label>
               <Label>
-                Ending this cycle saves its dates, bird count, and sample alert count. Equipment
+                Ending this cycle saves its dates, bird count, and alert count. Equipment
                 settings stay as they are.
               </Label>
               {ending ? (
@@ -153,7 +153,7 @@ export function FlockManager({ nextStep = false }: { nextStep?: boolean }) {
                 {flock.startDate} → {dateText(flock.endedAt)}
               </Label>
               <Label>
-                {flock.birds.toLocaleString()} birds · {flock.alertCount ?? 0} sample alerts
+                {flock.birds.toLocaleString()} birds · {flock.alertCount ?? 0} alerts
               </Label>
             </Card>
           ))}
@@ -416,7 +416,7 @@ export function Maintenance({ mode }: { mode: 'calibration' | 'diagnostics' | 's
           reporting
         </Label>
         <Label>
-          {snapshot.alerts.filter((a) => a.status !== 'resolved').length} unresolved sample alerts
+          {snapshot.alerts.filter((a) => a.status !== 'resolved').length} unresolved alerts
         </Label>
         <Label>Sound analysis: coming soon while the hub AI model is being trained.</Label>
         <Label>

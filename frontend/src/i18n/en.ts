@@ -323,7 +323,7 @@ export const en = {
   reconnectHelp:
     'Accept a pending request only if it is still valid and the house permits control.',
   offlineAction: 'Reconnect to make changes.',
-  localAck: 'Choose At the farm to acknowledge this sample alert.',
+  localAck: 'Connect to the farm hub to acknowledge an active alert.',
   toastAck: 'Alert acknowledgment saved.',
   toastRefresh: 'New dummy sample saved.',
   toastPreference: 'Preference saved on this device.',

@@ -94,7 +94,7 @@ export function AlertsScreen() {
           </View>
         </Card>
       ))}
-      {context.connection !== 'local' && (
+      {context.connection !== 'local' && alerts.some((alert) => alert.status !== 'resolved') && (
         <Label style={{ fontSize: 12, color: colors.muted }}>
           {context.connection === 'offline' ? en.offlineAction : en.localAck}
         </Label>

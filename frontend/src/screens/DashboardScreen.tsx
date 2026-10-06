@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { ArrowRight, CheckCircle2, TriangleAlert } from 'lucide-react-native';
+import { ArrowRight, CheckCircle2, Info, TriangleAlert } from 'lucide-react-native';
 import { en, relativeTime } from '../i18n/en';
 import { colors } from '../theme';
 import { useFarm } from '../state/FarmProvider';
@@ -25,6 +25,8 @@ export function DashboardScreen() {
     [next, setNext] = useState(false);
   const attention = houseAttention(snapshot);
   const clear = attention.kind === 'clear';
+  const informational = attention.kind === 'unclassified';
+  const needsAttention = !clear && !informational;
   const title =
     attention.kind === 'alert'
       ? en[attention.alert.titleKey]
@@ -56,17 +58,28 @@ export function DashboardScreen() {
         style={{
           padding: 18,
           gap: 12,
-          backgroundColor: clear ? colors.greenSoft : colors.amberSoft,
+          backgroundColor: clear
+            ? colors.greenSoft
+            : informational
+              ? colors.blueSoft
+              : colors.amberSoft,
         }}
       >
-        {!clear && (
+        {needsAttention && (
           <Label weight="bold" style={{ fontSize: 12, color: colors.amber }}>
             Needs attention
+          </Label>
+        )}
+        {informational && (
+          <Label weight="bold" style={{ fontSize: 12, color: colors.blue }}>
+            Monitoring
           </Label>
         )}
         <View style={styles.row}>
           {clear ? (
             <CheckCircle2 size={21} color={colors.green} />
+          ) : informational ? (
+            <Info size={21} color={colors.blue} />
           ) : (
             <TriangleAlert size={21} color={colors.amber} />
           )}
@@ -75,7 +88,7 @@ export function DashboardScreen() {
           </Label>
         </View>
         <Label>{body}</Label>
-        {!clear && (
+        {needsAttention && (
           <Button
             testID="overview-attention-action"
             compact
