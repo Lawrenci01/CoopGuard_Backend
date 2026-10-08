@@ -484,27 +484,50 @@ export async function createApp(
           registered.map((node) => [node.id, node.section]),
         );
         const messagePlaceholders = body.readings.map(() => "?").join(",");
-        const sequencePredicates = body.readings
-          .map(() => "(node_id=? AND sequence=?)")
-          .join(" OR ");
         const existingRows = (await db
           .prepare(
             `SELECT message_id,sequence,node_id FROM sensor_readings
-             WHERE hub_id=? AND (message_id IN (${messagePlaceholders}) OR ${sequencePredicates})`,
+             WHERE hub_id=? AND message_id IN (${messagePlaceholders})`,
           )
-          .all(
-            hub.id,
-            ...body.readings.map((reading) => reading.messageId),
-            ...body.readings.flatMap((reading) => [
-              reading.nodeId,
-              reading.sequence,
-            ]),
-          )) as { message_id: string; sequence: number; node_id: string }[];
+          .all(hub.id, ...body.readings.map((reading) => reading.messageId))) as {
+          message_id: string;
+          sequence: number;
+          node_id: string;
+        }[];
         const existingMessages = new Map(
           existingRows.map((reading) => [reading.message_id, reading]),
         );
+        const existingSequenceRows: {
+          message_id: string;
+          sequence: number;
+          node_id: string;
+        }[] = [];
+        for (let index = 0; index < body.readings.length; index += 60) {
+          const chunk = body.readings.slice(index, index + 60);
+          const predicates = chunk
+            .map(() => "(node_id=? AND sequence=?)")
+            .join(" OR ");
+          existingSequenceRows.push(
+            ...((await db
+              .prepare(
+                `SELECT message_id,sequence,node_id FROM sensor_readings
+                 WHERE hub_id=? AND (${predicates})`,
+              )
+              .all(
+                hub.id,
+                ...chunk.flatMap((reading) => [
+                  reading.nodeId,
+                  reading.sequence,
+                ]),
+              )) as {
+              message_id: string;
+              sequence: number;
+              node_id: string;
+            }[]),
+          );
+        }
         const existingSequences = new Map(
-          existingRows.map((reading) => [
+          existingSequenceRows.map((reading) => [
             `${reading.node_id}:${Number(reading.sequence)}`,
             reading,
           ]),

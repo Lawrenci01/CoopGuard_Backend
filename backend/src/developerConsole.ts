@@ -82,6 +82,7 @@ export function registerDeveloperConsole(
       "hardware",
       "gateway-simulator.mjs",
     );
+    const localCa = join(dirname(options.hubConfigPath), "tls", "ca.crt");
     simulatorLog = "";
     simulator = spawn(
       process.execPath,
@@ -99,7 +100,12 @@ export function registerDeveloperConsole(
         "60",
       ],
       {
-        env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+        env: {
+          ...process.env,
+          ...(existsSync(localCa)
+            ? { NODE_EXTRA_CA_CERTS: localCa }
+            : { NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
+        },
         stdio: "pipe",
         windowsHide: true,
       },
