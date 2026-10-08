@@ -114,6 +114,21 @@ test("a laptop hub is claimed once and replacement requires admin approval", asy
   });
   assert.equal(duplicate.statusCode, 409, duplicate.body);
 
+  const removed = await app.inject({
+    method: "DELETE",
+    url: `/v1/farms/${farmId}/nodes/${inventory.json().nodes[0].nodeId}`,
+    headers: { authorization: `Bearer ${technician}` },
+  });
+  assert.equal(removed.statusCode, 200, removed.body);
+  const replacementNode = await app.inject({
+    method: "POST",
+    url: `/v1/farms/${farmId}/nodes`,
+    headers: { authorization: `Bearer ${technician}` },
+    payload: { section: "A" },
+  });
+  assert.equal(replacementNode.statusCode, 200, replacementNode.body);
+  assert.equal(replacementNode.json().nodeId, `${first.config.hubId}-N04`);
+
   const second = await createHubPairing(
     db,
     { wifiUrl: "https://192.168.1.11:8443", usbUrl: "https://localhost:8443" },

@@ -845,7 +845,12 @@ export async function createApp(
           "SELECT id,section FROM telemetry_nodes WHERE farm_id=? AND hub_id=? AND active=1 ORDER BY created_at,id",
         )
         .all(farmId, hub.id as string);
-      const number = String(existingNodes.length + 1).padStart(2, "0");
+      const nextNumber = await db
+        .prepare(
+          "SELECT COALESCE(MAX(CAST(number AS INTEGER)),0)+1 value FROM telemetry_nodes WHERE hub_id=?",
+        )
+        .get(hub.id as string);
+      const number = String(Number(nextNumber?.value ?? 1)).padStart(2, "0");
       const nodeId = body.nodeId ?? `${String(hub.id)}-N${number}`;
       if (
         await db.prepare("SELECT 1 FROM telemetry_nodes WHERE id=?").get(nodeId)
