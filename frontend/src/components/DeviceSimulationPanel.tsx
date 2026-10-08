@@ -200,9 +200,11 @@ export function DeviceSimulationPanel() {
                 {busy ? 'Registering…' : 'Add Node'}
               </Button>
             </View>
-            <Button variant="secondary" icon={QrCode} onPress={() => setScanner(true)}>
-              Scan
-            </Button>
+            <View style={{ flex: 1 }}>
+              <Button variant="secondary" icon={QrCode} onPress={() => setScanner(true)}>
+                Scan QR
+              </Button>
+            </View>
           </View>
 
           {devices.nodes.map((node) => (
