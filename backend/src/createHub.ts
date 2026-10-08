@@ -50,7 +50,6 @@ const databasePath =
 const db = await openDatabase(databasePath, turso, "hub");
 try {
   const pairing = await createHubPairing(db, { wifiUrl, usbUrl: values.usb! });
-  await db.sync?.();
   const output = resolve(values.output!);
   writeFileSync(output, `${JSON.stringify(pairing.config, null, 2)}\n`, {
     encoding: "utf8",
@@ -66,6 +65,13 @@ try {
     }),
     "utf8",
   );
+  try {
+    await db.sync?.();
+  } catch (error) {
+    console.warn(
+      `Pairing was saved to the local replica. Cloud synchronization will retry after the hub starts: ${error instanceof Error ? error.message : "sync failed"}`,
+    );
+  }
   console.log(
     await QRCode.toString(pairing.qr, { type: "terminal", small: true }),
   );
