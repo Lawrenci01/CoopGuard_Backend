@@ -5,6 +5,9 @@ $cgConfig = Join-Path $cgLocal 'hub-config.json'
 if (-not $env:TURSO_DATABASE_URL -or -not $env:TURSO_AUTH_TOKEN) {
   throw 'The laptop hub requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN from the Render service. Set both in this PowerShell session before creating or starting the hub.'
 }
+if ($env:TURSO_DATABASE_URL -notmatch '^libsql://' -or $env:TURSO_DATABASE_URL -match 'YOUR-DATABASE|example') {
+  throw 'Replace the TURSO_DATABASE_URL placeholder with the exact libsql:// database URL used by Render.'
+}
 if (-not (Test-Path -LiteralPath $cgConfig)) {
   throw 'Create the laptop hub first: npm run hub:create -- --wifi https://YOUR-LAPTOP-IP:8443'
 }
@@ -27,6 +30,23 @@ try {
   $env:CG_MODE = $previousMode
   $env:CG_HUB_CONFIG = $previousConfig
 }
-Write-Output "CoopGuard laptop hub started (PID $($cgProcess.Id))."
-Write-Output 'Database: cloud-synchronized local replica (.local\coopguard-hub-sync.sqlite)'
-Write-Output 'Developer console: https://localhost:8443/developer'
+for ($attempt = 0; $attempt -lt 120; $attempt++) {
+  if ($cgProcess.HasExited) {
+    Remove-Item -LiteralPath (Join-Path $cgLocal 'server.pid') -Force -ErrorAction SilentlyContinue
+    $cgErrorLog = Join-Path $cgLocal 'server.err.log'
+    $cgDetails = if (Test-Path -LiteralPath $cgErrorLog) {
+      (Get-Content -LiteralPath $cgErrorLog -Tail 12) -join [Environment]::NewLine
+    } else {
+      'No server error log was written.'
+    }
+    throw "The CoopGuard laptop hub failed to start.$([Environment]::NewLine)$cgDetails"
+  }
+  if (Get-NetTCPConnection -LocalPort 8443 -State Listen -ErrorAction SilentlyContinue) {
+    Write-Output "CoopGuard laptop hub started (PID $($cgProcess.Id))."
+    Write-Output 'Database: cloud-synchronized local replica (.local\coopguard-hub-sync.sqlite)'
+    Write-Output 'Developer console: https://localhost:8443/developer'
+    exit 0
+  }
+  Start-Sleep -Milliseconds 250
+}
+throw 'The CoopGuard laptop hub process is still running but did not become ready on port 8443 within 30 seconds. Check .local\server.err.log before retrying.'

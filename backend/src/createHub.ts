@@ -38,6 +38,13 @@ if (!turso)
   throw new Error(
     "Laptop hub pairing requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN so farms, accounts, devices, and readings use the same cloud-synchronized database.",
   );
+if (
+  new URL(turso.url).protocol !== "libsql:" ||
+  /your-database|example/i.test(turso.url)
+)
+  throw new Error(
+    "Replace the TURSO_DATABASE_URL placeholder with the exact libsql:// database URL used by Render.",
+  );
 const databasePath =
   process.env.CG_DB_PATH ?? resolve(localDir, "coopguard-hub-sync.sqlite");
 const db = await openDatabase(databasePath, turso, "hub");
