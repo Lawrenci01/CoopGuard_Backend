@@ -144,7 +144,15 @@ export function registerDeveloperConsole(
         .get(),
       db
         .prepare(
-          `SELECT COUNT(*) registered,SUM(CASE WHEN last_seen_at IS NOT NULL AND last_seen_at>? THEN 1 ELSE 0 END) reporting FROM (SELECT n.id,MAX(r.received_at) last_seen_at FROM telemetry_nodes n LEFT JOIN sensor_readings r ON r.node_id=n.id WHERE n.active=1 GROUP BY n.id)`,
+          `SELECT COUNT(*) registered,SUM(CASE WHEN last_seen_at IS NOT NULL AND last_seen_at>? THEN 1 ELSE 0 END) reporting
+           FROM (
+             SELECT n.id,MAX(r.received_at) last_seen_at
+             FROM telemetry_nodes n LEFT JOIN sensor_readings r ON r.node_id=n.id
+             WHERE n.active=1 AND n.hub_id=(
+               SELECT id FROM telemetry_hubs WHERE active=1 ORDER BY created_at DESC LIMIT 1
+             )
+             GROUP BY n.id
+           )`,
         )
         .get(Date.now() - 3 * 60_000),
       db
