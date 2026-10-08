@@ -2,6 +2,9 @@ $ErrorActionPreference = 'Stop'
 $cgBackend = Split-Path -Parent $PSScriptRoot
 $cgLocal = Join-Path $cgBackend '.local'
 $cgConfig = Join-Path $cgLocal 'hub-config.json'
+if (-not $env:TURSO_DATABASE_URL -or -not $env:TURSO_AUTH_TOKEN) {
+  throw 'The laptop hub requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN from the Render service. Set both in this PowerShell session before creating or starting the hub.'
+}
 if (-not (Test-Path -LiteralPath $cgConfig)) {
   throw 'Create the laptop hub first: npm run hub:create -- --wifi https://YOUR-LAPTOP-IP:8443'
 }
@@ -25,4 +28,5 @@ try {
   $env:CG_HUB_CONFIG = $previousConfig
 }
 Write-Output "CoopGuard laptop hub started (PID $($cgProcess.Id))."
+Write-Output 'Database: cloud-synchronized local replica (.local\coopguard-hub-sync.sqlite)'
 Write-Output 'Developer console: https://localhost:8443/developer'

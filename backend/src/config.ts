@@ -2,8 +2,6 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 export const projectDir = fileURLToPath(new URL("..", import.meta.url));
 export const localDir = join(projectDir, ".local");
-export const databasePath =
-  process.env.CG_DB_PATH ?? join(localDir, "coopguard.sqlite");
 export const turso =
   process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN
     ? {
@@ -17,3 +15,11 @@ export const deploymentMode =
     : process.env.RENDER === "true" || process.env.CG_MODE === "cloud"
       ? "cloud"
       : "standalone";
+export const databasePath =
+  process.env.CG_DB_PATH ??
+  join(
+    localDir,
+    deploymentMode === "hub" && turso
+      ? "coopguard-hub-sync.sqlite"
+      : "coopguard.sqlite",
+  );

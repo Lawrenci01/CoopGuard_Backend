@@ -3,7 +3,7 @@ import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import QRCode from "qrcode";
-import { databasePath, localDir } from "./config";
+import { localDir, turso } from "./config";
 import { openDatabase } from "./database";
 import { createHubPairing } from "./hubPairing";
 
@@ -34,9 +34,16 @@ if (!wifiUrl)
     "No private laptop address was found. Run again with --wifi https://YOUR-LAPTOP-IP:8443.",
   );
 
-const db = await openDatabase(databasePath);
+if (!turso)
+  throw new Error(
+    "Laptop hub pairing requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN so farms, accounts, devices, and readings use the same cloud-synchronized database.",
+  );
+const databasePath =
+  process.env.CG_DB_PATH ?? resolve(localDir, "coopguard-hub-sync.sqlite");
+const db = await openDatabase(databasePath, turso, "hub");
 try {
   const pairing = await createHubPairing(db, { wifiUrl, usbUrl: values.usb! });
+  await db.sync?.();
   const output = resolve(values.output!);
   writeFileSync(output, `${JSON.stringify(pairing.config, null, 2)}\n`, {
     encoding: "utf8",

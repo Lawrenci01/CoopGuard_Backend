@@ -12,6 +12,7 @@ import {
 import { api, apiRequest, ApiError } from '../src/services/api';
 import type { Session, WorkerAccount } from '../src/services/apiTypes';
 import type { Role } from '../src/domain/types';
+import { CLOUD_SERVER } from '../src/state/AuthProvider';
 import { workflowFromSurvey } from '../src/domain/siteWorkflow';
 import { commissionSiteForControl, completeSiteSurvey } from './siteTestFixture';
 
@@ -171,6 +172,28 @@ beforeEach(async () => {
 });
 
 describe('authenticated native mobile flows', () => {
+  test('hub-issued admin session remains active when cloud has not received that token yet', async () => {
+    const hubServer = 'https://192.168.1.22:8443';
+    jest.mocked(api.me).mockImplementation(async (server, token) => {
+      online();
+      if (server === CLOUD_SERVER) throw new ApiError(401, 'Session ended.');
+      const session = sessions.get(token);
+      if (!session) throw new ApiError(401, 'Session ended.');
+      return session;
+    });
+
+    await render(<App />);
+    await fireEvent.press(screen.getByText('Laptop hub'));
+    await fireEvent.changeText(screen.getByLabelText(/Laptop hub address/), hubServer);
+    await signIn('team.admin');
+
+    await screen.findByTestId('admin-workspace');
+    await waitFor(() => expect(api.me).toHaveBeenCalledWith(CLOUD_SERVER, 'a'.repeat(43)));
+    expect(screen.getByTestId('admin-workspace')).toBeTruthy();
+    const saved = JSON.parse((await SecureStore.getItemAsync('coopguard.auth.v1'))!);
+    expect(saved.server).toBe(hubServer);
+  });
+
   test('admin signs in without a farm and provisions a farm with credentials and QR', async () => {
     jest.mocked(api.adminCreateFarm).mockReset();
     jest.mocked(api.adminCreateFarm).mockResolvedValueOnce({

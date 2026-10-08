@@ -186,7 +186,11 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       setCloudOnline(cloudOk);
       setHubOnline(hubOk);
       const cloudFailure = cloudResult.status === 'rejected' ? cloudResult.reason : null;
-      if (cloudFailure instanceof ApiError && cloudFailure.status === 401) {
+      if (
+        saved.server === CLOUD_SERVER &&
+        cloudFailure instanceof ApiError &&
+        cloudFailure.status === 401
+      ) {
         await clear(cloudFailure.message);
         return;
       }

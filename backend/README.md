@@ -197,12 +197,27 @@ Physical LoRa ingestion, local control-rule processing, node command acknowledgm
 ### Laptop hub pilot
 
 The laptop can now operate as the local hub with the same authenticated telemetry contract that
-the Raspberry Pi will use later. From `backend/`, create its one-time pairing QR:
+the Raspberry Pi will use later. It must use the same Turso database as Render so accounts, farms,
+sessions, hubs, nodes, and readings are shared across cloud and local connections. In the same
+PowerShell window, load the Render database credentials without saving the token in command history,
+then create the one-time pairing QR:
 
 ```powershell
-npm run hub:create -- --wifi https://YOUR-LAPTOP-IP:8443
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-laptop-hub.ps1
+$env:TURSO_DATABASE_URL = "libsql://your-database-your-account.turso.io"
+$secureToken = Read-Host "Turso auth token" -AsSecureString
+$env:TURSO_AUTH_TOKEN = [System.Net.NetworkCredential]::new("", $secureToken).Password
+$wifiIp = (Get-NetIPConfiguration -InterfaceAlias "Wi-Fi").IPv4Address.IPAddress
+npm run tls
+npm run hub:create -- --wifi "https://${wifiIp}:8443"
+npm run hub:start
 ```
+
+The first run requires internet and creates `.local/coopguard-hub-sync.sqlite`, a local synchronized
+replica of the Render/Turso database. The older `.local/coopguard.sqlite` standalone-development
+database is kept separate and is not used by the commissioned hub. `hub:create` and `hub:start`
+refuse to run without both Turso settings so a second, isolated set of user or farm records cannot
+be created accidentally. After the background hub inherits the credentials, remove them from the
+interactive shell with `Remove-Item Env:TURSO_DATABASE_URL,Env:TURSO_AUTH_TOKEN`.
 
 The command writes the private simulator identity to `.local/hub-config.json` and a scannable SVG
 to `.local/hub-config.json.qr.svg`. On the technician interface, select Local WiFi or USB cable,
@@ -226,12 +241,13 @@ hourly readings and submits them through the same authenticated ingestion API us
 It uses a per-hub process lock and a durable spool, so frontend sessions cannot duplicate readings
 and an interrupted upload resumes in order. The console can stop/restart the simulator, export
 readings to CSV, and create checkpointed database backups.
-It is restricted to loopback access and is disabled in cloud mode. The default database remains
-`.local/coopguard.sqlite`; set `CG_DB_PATH` to use a different durable location.
+It is restricted to loopback access and is disabled in cloud mode. A synchronized laptop hub uses
+`.local/coopguard-hub-sync.sqlite`; set `CG_DB_PATH` before both `hub:create` and `hub:start` to use
+a different durable replica location.
 
 Every hub, node, and sensor reading has a `source` value of `simulated` or `hardware`. Current
-dashboards and Trends are built from the same latest/history queries. Trends can show Today, Week,
-Month, 3 months, or 6 months and can filter the whole-house average or a single node. The laptop
+dashboards and Trends are built from the same latest/history queries. Trends can show Today, 7 days,
+or 30 days and can filter the whole-house average or a single node. The laptop
 simulator reports the full standard five-sensor payload per node: temperature, relative humidity,
 ammonia, carbon dioxide, and litter moisture. Therefore three installed nodes provide three litter
 moisture measurement locations rather than three unrelated litter fields in one node.
