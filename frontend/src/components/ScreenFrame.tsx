@@ -11,10 +11,14 @@ export function ScreenFrame({
   children,
   action,
   title,
+  subtitle,
+  hideTitle = false,
 }: React.PropsWithChildren<{
   tab: TabName;
   action?: React.ReactNode;
   title?: string;
+  subtitle?: string;
+  hideTitle?: boolean;
 }>) {
   const { refresh } = useFarm();
   const [refreshing, setRefreshing] = useState(false);
@@ -39,16 +43,29 @@ export function ScreenFrame({
           }}
         />
       }
-      contentContainerStyle={{ padding: 18, paddingBottom: 28 }}
+      contentContainerStyle={{ padding: 20, paddingBottom: 30 }}
       style={{ flex: 1, backgroundColor: colors.background }}
     >
-      <View style={{ width: '100%', maxWidth: 760, alignSelf: 'center', gap: 16 }}>
-        <View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }]}>
-          <Label accessibilityRole="header" weight="bold" style={{ fontSize: 23, lineHeight: 30 }}>
-            {title ?? (tab === 'Dashboard' ? 'Today' : en.nav[tab])}
-          </Label>
-          {action}
-        </View>
+      <View style={{ width: '100%', maxWidth: 760, alignSelf: 'center', gap: 12 }}>
+        {!hideTitle && (
+          <View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }]}>
+            <View style={{ flex: 1 }}>
+              <Label
+                accessibilityRole="header"
+                weight="bold"
+                style={{ fontSize: 26, lineHeight: 32, letterSpacing: -0.7 }}
+              >
+                {title ?? (tab === 'Dashboard' ? 'Today' : en.nav[tab])}
+              </Label>
+              {subtitle && (
+                <Label style={{ color: colors.muted, fontSize: 12, marginTop: 4 }}>
+                  {subtitle}
+                </Label>
+              )}
+            </View>
+            {action}
+          </View>
+        )}
         {children}
       </View>
     </ScrollView>

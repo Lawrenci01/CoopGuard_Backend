@@ -1,4 +1,5 @@
 import type { FarmSnapshot } from '../domain/types';
+import { validSectionLabel } from '../domain/houseLayout';
 
 export interface KeyValueStorage {
   getItem(key: string): Promise<string | null>;
@@ -34,7 +35,7 @@ export function validSnapshot(value: unknown): value is FarmSnapshot {
       record(sensor) &&
       typeof sensor.id === 'string' &&
       typeof sensor.number === 'string' &&
-      ['A', 'B', 'C'].includes(String(sensor.section)) &&
+      validSectionLabel(sensor.section) &&
       finite(sensor.x) &&
       sensor.x >= 0 &&
       sensor.x <= 1 &&
@@ -64,7 +65,7 @@ export function validSnapshot(value: unknown): value is FarmSnapshot {
       ['heatAlert', 'sensorAlert', 'sensorCheckAlert', 'resolvedAlert'].includes(
         String(alert.titleKey),
       ) &&
-      ['A', 'B', 'C'].includes(String(alert.section)) &&
+      validSectionLabel(alert.section) &&
       ['warning', 'info'].includes(String(alert.severity)) &&
       ['active', 'acknowledged', 'resolved'].includes(String(alert.status)) &&
       finite(alert.detectedAt) &&

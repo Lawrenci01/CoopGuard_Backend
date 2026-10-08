@@ -69,6 +69,31 @@ test('a verified open house can become a control candidate but never activates f
     state.snapshot.sensors.map((sensor) => sensor.section),
     ['A', 'B', 'C'],
   );
+
+  const removedNodeId = state.deviceSimulation.nodes[0]!.id;
+  state = await repo.dispatch({ type: 'removeVirtualDevice', id: removedNodeId });
+  assert.equal(state.deviceSimulation.nodes.length, 2);
+  assert.equal(state.snapshot.sensors.length, 2);
+
+  state = await repo.dispatch({
+    type: 'createVirtualNode',
+    farmCode: 'CG-PH-TEST01',
+    section: 'A',
+  });
+  const replacement = state.deviceSimulation.nodes.at(-1)!;
+  state = await repo.dispatch({
+    type: 'pairVirtualDevice',
+    qr: pairingQr({
+      version: 1,
+      kind: 'node',
+      farmCode: replacement.farmCode,
+      deviceId: replacement.id,
+      pairingCode: replacement.pairingCode,
+    }),
+  });
+  assert.equal(state.deviceSimulation.nodes.length, 3);
+  assert.equal(state.snapshot.sensors.length, 3);
+  assert.equal(state.deviceSimulation.nodes.at(-1)!.status, 'reporting');
 });
 
 test('the simulated farm snapshot contains one record per installed node', () => {

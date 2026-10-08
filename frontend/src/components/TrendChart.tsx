@@ -1,5 +1,5 @@
-import React, { useId } from 'react';
-import { View } from 'react-native';
+import React, { useEffect, useId, useState } from 'react';
+import { Pressable, View } from 'react-native';
 import Svg, {
   Circle,
   Defs,
@@ -10,59 +10,85 @@ import Svg, {
   Text as SvgText,
 } from 'react-native-svg';
 import { colors, fonts } from '../theme';
-import { en } from '../i18n/en';
+import { Label } from './ui';
+
+export interface TrendPoint {
+  sampledAt: number;
+  value: number;
+}
 
 export function TrendChart({
-  values,
-  compact = false,
-  labels = en.chartLabels.today,
+  points,
+  unit,
+  precision,
+  axisLabels,
+  formatTimestamp,
 }: {
-  values: number[];
-  compact?: boolean;
-  labels?: string[];
+  points: TrendPoint[];
+  unit: string;
+  precision: number;
+  axisLabels: string[];
+  formatTimestamp: (sampledAt: number) => string;
 }) {
   const id = useId().replace(/:/g, '');
-  const min = Math.min(...values) - 1;
-  const max = Math.max(...values) + 1;
-  const left = compact ? 0 : 36,
-    right = compact ? 420 : 415,
-    top = compact ? 5 : 16,
-    bottom = compact ? 48 : 155;
-  const points = values.map((value, i) => ({
-    x: left + (i / Math.max(values.length - 1, 1)) * (right - left),
-    y: bottom - ((value - min) / (max - min)) * (bottom - top),
+  const [selectedIndex, setSelectedIndex] = useState(Math.max(0, points.length - 1));
+  const [layoutWidth, setLayoutWidth] = useState(430);
+
+  useEffect(() => setSelectedIndex(Math.max(0, points.length - 1)), [points]);
+
+  const rawMin = Math.min(...points.map((point) => point.value));
+  const rawMax = Math.max(...points.map((point) => point.value));
+  const padding = Math.max((rawMax - rawMin) * 0.14, precision ? 0.5 : 1);
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const left = 45;
+  const right = 420;
+  const top = 16;
+  const bottom = 158;
+  const chartPoints = points.map((point, index) => ({
+    x: left + (index / Math.max(points.length - 1, 1)) * (right - left),
+    y: bottom - ((point.value - min) / Math.max(max - min, 1)) * (bottom - top),
   }));
-  const first = points[0]!,
-    last = points[points.length - 1]!;
-  const path = points
-    .map((p, i) => {
-      if (i === 0) return `M ${p.x} ${p.y}`;
-      const prev = points[i - 1]!;
-      return `C ${(prev.x + p.x) / 2} ${prev.y}, ${(prev.x + p.x) / 2} ${p.y}, ${p.x} ${p.y}`;
+  const first = chartPoints[0]!;
+  const last = chartPoints[chartPoints.length - 1]!;
+  const path = chartPoints
+    .map((point, index) => {
+      if (index === 0) return `M ${point.x} ${point.y}`;
+      const previous = chartPoints[index - 1]!;
+      return `C ${(previous.x + point.x) / 2} ${previous.y}, ${(previous.x + point.x) / 2} ${point.y}, ${point.x} ${point.y}`;
     })
     .join(' ');
+  const selected = points[selectedIndex] ?? points[points.length - 1]!;
+  const selectedChartPoint = chartPoints[selectedIndex] ?? last;
+
+  const selectAt = (locationX: number) => {
+    const plotLeft = (left / 430) * layoutWidth;
+    const plotRight = (right / 430) * layoutWidth;
+    const ratio = Math.min(1, Math.max(0, (locationX - plotLeft) / (plotRight - plotLeft)));
+    setSelectedIndex(Math.round(ratio * Math.max(0, points.length - 1)));
+  };
+
   return (
-    <View
-      accessibilityLabel={compact ? undefined : en.chartDescription}
-      style={{ height: compact ? 52 : 192, width: '100%' }}
-    >
-      <Svg
-        width="100%"
-        height="100%"
-        viewBox={`0 0 430 ${compact ? 52 : 192}`}
-        preserveAspectRatio="none"
+    <View style={{ gap: 10 }}>
+      <Pressable
+        accessibilityRole="adjustable"
+        accessibilityLabel={`Environmental history. Selected ${selected.value.toFixed(precision)} ${unit}, ${formatTimestamp(selected.sampledAt)}.`}
+        accessibilityHint="Tap a position on the chart to inspect its reading."
+        onLayout={(event) => setLayoutWidth(event.nativeEvent.layout.width)}
+        onPress={(event) => selectAt(event.nativeEvent.locationX)}
+        style={({ pressed }) => ({ height: 205, opacity: pressed ? 0.96 : 1 })}
       >
-        <Defs>
-          <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#C9DDAD" stopOpacity="0.55" />
-            <Stop offset="1" stopColor="#E7EEDC" stopOpacity="0.08" />
-          </LinearGradient>
-        </Defs>
-        {!compact &&
-          [0, 1, 2, 3].map((i) => {
-            const y = top + (i / 3) * (bottom - top);
+        <Svg width="100%" height="100%" viewBox="0 0 430 205" preserveAspectRatio="none">
+          <Defs>
+            <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor={colors.green} stopOpacity="0.24" />
+              <Stop offset="1" stopColor={colors.green} stopOpacity="0.015" />
+            </LinearGradient>
+          </Defs>
+          {[0, 1, 2, 3].map((index) => {
+            const y = top + (index / 3) * (bottom - top);
             return (
-              <React.Fragment key={i}>
+              <React.Fragment key={index}>
                 <Line
                   x1={left}
                   x2={right}
@@ -72,51 +98,92 @@ export function TrendChart({
                   strokeDasharray="3 5"
                 />
                 <SvgText
-                  x="0"
+                  x="38"
                   y={y + 4}
+                  textAnchor="end"
                   fill={colors.muted}
-                  fontSize="10"
+                  fontSize="9"
                   fontFamily={fonts.regular}
                 >
-                  {Math.round(max - (i / 3) * (max - min))}
+                  {(max - (index / 3) * (max - min)).toFixed(precision)}
                 </SvgText>
               </React.Fragment>
             );
           })}
-        <Path d={`${path} L ${last.x} ${bottom} L ${first.x} ${bottom} Z`} fill={`url(#${id})`} />
-        <Path
-          d={path}
-          fill="none"
-          stroke={colors.green}
-          strokeWidth={compact ? 2 : 2.5}
-          strokeLinecap="round"
-        />
-        {!compact && (
-          <>
-            <Circle
-              cx={last.x}
-              cy={last.y}
-              r="5"
-              fill={colors.green}
-              stroke="white"
-              strokeWidth="2"
-            />
-            {labels.map((label, i) => (
-              <SvgText
-                key={label}
-                x={left + (i / (labels.length - 1)) * (right - left)}
-                y="184"
-                textAnchor={i === 0 ? 'start' : i === labels.length - 1 ? 'end' : 'middle'}
-                fontSize="10"
-                fill={colors.muted}
-                fontFamily={fonts.regular}
-              >
-                {label}
-              </SvgText>
-            ))}
-          </>
-        )}
-      </Svg>
+          <Path d={`${path} L ${last.x} ${bottom} L ${first.x} ${bottom} Z`} fill={`url(#${id})`} />
+          <Path
+            d={path}
+            fill="none"
+            stroke={colors.green}
+            strokeWidth="2.8"
+            strokeLinecap="round"
+          />
+          <Line
+            x1={selectedChartPoint.x}
+            x2={selectedChartPoint.x}
+            y1={top}
+            y2={bottom}
+            stroke={colors.green}
+            strokeWidth="1"
+            strokeDasharray="4 4"
+            opacity="0.72"
+          />
+          <Circle
+            cx={selectedChartPoint.x}
+            cy={selectedChartPoint.y}
+            r="6"
+            fill={colors.green}
+            stroke="white"
+            strokeWidth="3"
+          />
+          {axisLabels.map((label, index) => (
+            <SvgText
+              key={`${label}-${index}`}
+              x={left + (index / Math.max(axisLabels.length - 1, 1)) * (right - left)}
+              y="194"
+              textAnchor={
+                index === 0 ? 'start' : index === axisLabels.length - 1 ? 'end' : 'middle'
+              }
+              fontSize="9"
+              fill={colors.muted}
+              fontFamily={fonts.regular}
+            >
+              {label}
+            </SvgText>
+          ))}
+        </Svg>
+      </Pressable>
+
+      <View
+        style={{
+          minHeight: 58,
+          borderRadius: 13,
+          backgroundColor: colors.greenSoft,
+          borderWidth: 1,
+          borderColor: '#D7E6DB',
+          paddingHorizontal: 13,
+          paddingVertical: 9,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <Label weight="bold" style={{ fontSize: 11, color: colors.green }}>
+            Selected whole-house average
+          </Label>
+          <Label style={{ color: colors.muted, fontSize: 10 }}>
+            {formatTimestamp(selected.sampledAt)}
+          </Label>
+        </View>
+        <Label weight="bold" style={{ color: colors.green, fontSize: 20, lineHeight: 26 }}>
+          {selected.value.toFixed(precision)} {unit}
+        </Label>
+      </View>
+      <Label style={{ color: colors.muted, fontSize: 10, textAlign: 'center' }}>
+        Tap anywhere on the graph to inspect the closest stored time window.
+      </Label>
     </View>
   );
 }

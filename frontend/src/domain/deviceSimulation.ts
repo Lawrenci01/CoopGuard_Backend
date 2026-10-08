@@ -1,6 +1,7 @@
 import type { SiteWorkflow } from './siteWorkflow';
 import { createDemoSnapshot } from '../data/fixtures';
 import type { FarmAlert, FarmSnapshot, Section } from './types';
+import { houseGrid, positionInSection, validSectionLabel, type HouseGrid } from './houseLayout';
 
 export type VirtualDeviceStatus = 'created' | 'paired' | 'reporting';
 
@@ -19,7 +20,7 @@ export interface VirtualNode {
   id: string;
   farmCode: string;
   pairingCode: string;
-  section: 'A' | 'B' | 'C';
+  section: Section;
   status: VirtualDeviceStatus;
   createdAt: number;
   pairedAt?: number;
@@ -80,24 +81,33 @@ export function deviceSetupProgress(
 export function snapshotForDeviceSimulation(
   snapshot: FarmSnapshot,
   simulation: DeviceSimulation,
+  layout: HouseGrid = houseGrid(90, 12),
 ): FarmSnapshot {
   const sample = createDemoSnapshot(snapshot.sampledAt);
   const sectionPositions = new Map<Section, number>();
-  const sections: Section[] = ['A', 'B', 'C'];
+  const sectionCounts = new Map<Section, number>();
+  for (const node of simulation.nodes)
+    sectionCounts.set(node.section, (sectionCounts.get(node.section) ?? 0) + 1);
   const sensors = simulation.nodes.map((node, index) => {
-    const sectionIndex = sections.indexOf(node.section);
     const sectionSensors = sample.sensors.filter((sensor) => sensor.section === node.section);
     const position = sectionPositions.get(node.section) ?? 0;
     sectionPositions.set(node.section, position + 1);
-    const base = sectionSensors[position % sectionSensors.length]!;
-    const countInSection = simulation.nodes.filter((item) => item.section === node.section).length;
+    const base =
+      sectionSensors[position % Math.max(1, sectionSensors.length)] ??
+      sample.sensors[index % sample.sensors.length]!;
+    const placement = positionInSection(
+      node.section,
+      layout,
+      position,
+      sectionCounts.get(node.section) ?? 1,
+    );
     return {
       ...base,
       id: node.id,
       number: String(index + 1).padStart(2, '0'),
       section: node.section,
-      x: sectionIndex / 3 + (position + 1) / (countInSection + 1) / 3,
-      y: 0.5,
+      x: node.x ?? placement.x,
+      y: node.y ?? placement.y,
       online: node.status === 'reporting',
       control: false,
       battery: null,
@@ -241,7 +251,7 @@ export function validDeviceSimulation(value: unknown): value is DeviceSimulation
         (node) =>
           validBase(node) &&
           node.id.startsWith('NODE-') &&
-          ['A', 'B', 'C'].includes(node.section) &&
+          validSectionLabel(node.section) &&
           (node.hubId === undefined || /^HUB-[A-Z0-9]{6,16}$/.test(node.hubId)) &&
           (node.x === undefined || (Number.isFinite(node.x) && node.x >= 0 && node.x <= 1)) &&
           (node.y === undefined || (Number.isFinite(node.y) && node.y >= 0 && node.y <= 1)) &&

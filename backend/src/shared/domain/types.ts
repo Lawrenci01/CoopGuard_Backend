@@ -4,14 +4,11 @@ export type ConnectionMode = "local" | "cloud" | "offline";
 export type Role = "owner" | "worker" | "technician" | "admin";
 export type ControlMode = "full" | "monitor";
 export type Condition =
-  | "good"
-  | "watch"
-  | "urgent"
-  | "unavailable"
-  | "unclassified";
+  "good" | "watch" | "urgent" | "unavailable" | "unclassified";
 export type MetricKey =
   "temperature" | "humidity" | "ammonia" | "co2" | "moisture";
-export type Section = "A" | "B" | "C";
+/** Generated house section label (A...Z, AA...AZ, and so on). */
+export type Section = string;
 
 export interface Sensor {
   id: string;
@@ -29,11 +26,7 @@ export interface Sensor {
 
 export interface FarmAlert {
   id: string;
-  titleKey:
-    | "heatAlert"
-    | "sensorAlert"
-    | "sensorCheckAlert"
-    | "resolvedAlert";
+  titleKey: "heatAlert" | "sensorAlert" | "sensorCheckAlert" | "resolvedAlert";
   section: Section;
   severity: "warning" | "info";
   status: "active" | "acknowledged" | "resolved";

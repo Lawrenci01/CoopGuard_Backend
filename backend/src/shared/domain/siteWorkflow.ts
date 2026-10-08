@@ -1,5 +1,6 @@
 import type { HouseSurveyDraft } from "./setup";
 import type { MetricKey } from "./types";
+import { houseGrid } from "./houseLayout";
 
 export type Answer = "yes" | "no" | "unknown";
 export type HouseType = "open" | "tunnel" | "mixed" | "unknown";
@@ -433,9 +434,15 @@ export function surveyMissing(s: SiteSurvey): string[] {
   if (!clean(s.farm.ownerName)) missing.push("Owner or farm contact");
   if (s.house.lengthMetres <= 0 || s.house.widthMetres <= 0)
     missing.push("House dimensions");
-  if (!clean(s.power.hubPowerLocation) || s.power.hubPowerLocation === "unknown")
+  if (
+    !clean(s.power.hubPowerLocation) ||
+    s.power.hubPowerLocation === "unknown"
+  )
     missing.push("Candidate hub power location");
-  if (!clean(s.connectivity.hubLocation) || s.connectivity.hubLocation === "none")
+  if (
+    !clean(s.connectivity.hubLocation) ||
+    s.connectivity.hubLocation === "none"
+  )
     missing.push("Candidate hub location");
   if (!clean(s.connectivity.region))
     missing.push("Country or region for radio review");
@@ -458,6 +465,7 @@ export function buildInstallationPlan(
   s: SiteSurvey,
   now = Date.now(),
 ): InstallationPlan {
+  const layout = houseGrid(s.house.lengthMetres, s.house.widthMetres);
   const blockers: string[] = [];
   const restrictions: string[] = [];
   if (s.safety.wiring === "damaged")
@@ -538,11 +546,8 @@ export function buildInstallationPlan(
   return {
     generatedAt: now,
     recommendedMode: restrictions.length === 0 ? "full_candidate" : "monitor",
-    sections: Math.max(
-      1,
-      Math.ceil(Math.max(s.house.lengthMetres, s.house.widthMetres) / 30),
-    ),
-    nodeCount: s.sensors.plannedNodes,
+    sections: layout.count,
+    nodeCount: Math.max(s.sensors.plannedNodes, layout.count),
     metrics,
     equipment: s.equipment
       .filter((e) => e.count > 0)
@@ -580,7 +585,8 @@ export function houseCapabilities(
   ];
   if (plan.metrics.includes("Sound collection"))
     app.push("Sound anomaly insights and flock-sound observations");
-  if (equipment.length) app.push(`Equipment status for ${equipment.join(", ")}`);
+  if (equipment.length)
+    app.push(`Equipment status for ${equipment.join(", ")}`);
 
   const hardware = [
     `${plan.nodeCount || 0} sensing node${plan.nodeCount === 1 ? "" : "s"} across ${plan.sections} house section${plan.sections === 1 ? "" : "s"}`,

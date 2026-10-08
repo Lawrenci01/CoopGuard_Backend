@@ -7,6 +7,7 @@ import { useFarm } from '../state/FarmProvider';
 import { Button, Card, Choice, Label, SectionTitle, Sheet } from './ui';
 import { relativeTime } from '../i18n/en';
 import { useAuth } from '../state/AuthProvider';
+import { houseGrid, positionInSection, sectionBounds } from '../domain/houseLayout';
 
 export function Field({
   label,
@@ -88,8 +89,8 @@ export function FlockManager({ nextStep = false }: { nextStep?: boolean }) {
                 {data.flock.birds.toLocaleString()} birds · started {data.flock.startDate}
               </Label>
               <Label>
-                Ending this cycle saves its dates, bird count, and alert count. Equipment
-                settings stay as they are.
+                Ending this cycle saves its dates, bird count, and alert count. Equipment settings
+                stay as they are.
               </Label>
               {ending ? (
                 <>
@@ -283,10 +284,16 @@ export function InspectionNotes({ kind }: { kind: Inspection['kind'] }) {
 }
 
 export function SensorEditor({ sensor, onClose }: { sensor: Sensor; onClose: () => void }) {
-  const { perform } = useFarm();
+  const { perform, data } = useFarm();
+  const house = data.site.survey?.house ?? data.house;
+  const layout = houseGrid(house?.lengthMetres ?? 90, house?.widthMetres ?? 12);
+  const initialBounds = sectionBounds(sensor.section, layout);
+  const relativeX = initialBounds
+    ? (sensor.x - initialBounds.xMin) / (initialBounds.xMax - initialBounds.xMin)
+    : 0.5;
   const [section, setSection] = useState<Section>(sensor.section),
     [position, setPosition] = useState(
-      sensor.y < 0.4 ? 'front' : sensor.y > 0.6 ? 'back' : 'middle',
+      relativeX < 0.4 ? 'front' : relativeX > 0.6 ? 'back' : 'middle',
     ),
     [remove, setRemove] = useState(false),
     [busy, setBusy] = useState(false);
@@ -294,14 +301,19 @@ export function SensorEditor({ sensor, onClose }: { sensor: Sensor; onClose: () 
     <View style={{ gap: 16 }}>
       <SectionTitle title="Sensor placement" />
       <Choice
-        values={['A', 'B', 'C']}
-        labels={{ A: 'Section A', B: 'Section B', C: 'Section C' }}
+        values={layout.sections}
+        labels={
+          Object.fromEntries(layout.sections.map((value) => [value, `Section ${value}`])) as Record<
+            Section,
+            string
+          >
+        }
         selected={section}
         onSelect={setSection}
       />
       <Choice
         values={['front', 'middle', 'back']}
-        labels={{ front: 'Front', middle: 'Middle', back: 'Back' }}
+        labels={{ front: 'Inlet side', middle: 'Center', back: 'Exhaust side' }}
         selected={position}
         onSelect={setPosition}
       />
@@ -309,14 +321,21 @@ export function SensorEditor({ sensor, onClose }: { sensor: Sensor; onClose: () 
         disabled={busy}
         onPress={async () => {
           setBusy(true);
+          const placement = positionInSection(
+            section,
+            layout,
+            0,
+            1,
+            position === 'front' ? 0.25 : position === 'back' ? 0.75 : 0.5,
+          );
           if (
             await perform(
               {
                 type: 'moveSensor',
                 id: sensor.id,
                 section,
-                x: (['A', 'B', 'C'].indexOf(section) + 0.5) / 3,
-                y: position === 'front' ? 0.25 : position === 'back' ? 0.75 : 0.5,
+                x: placement.x,
+                y: placement.y,
               },
               'Sensor position saved.',
             )

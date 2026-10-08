@@ -52,7 +52,7 @@ cd C:\Vault\Projects\CG\backend
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-pc.ps1
 ```
 
-The helper starts Node in the background, stores a PID and redirects logs to `.local/server.out.log` / `server.err.log`. `npm start` instead runs in the current terminal. Keep the PC awake. The current phone address is **`https://192.168.8.36:8443`**.
+The helper starts Node in the background, stores a PID and redirects logs to `.local/server.out.log` / `server.err.log`. `npm start` instead runs in the current terminal. Keep the PC awake. The phone must use the laptop's current Wi-Fi IPv4 address, such as **`https://192.168.x.x:8443`**; do not reuse an address from a previous network.
 
 The connected Redmi successfully reached this PC's port 8443 over WiFi using the existing network policy. Windows denied adding an explicit firewall rule without administrator rights, so none was added. If another phone cannot connect, run this once in **Administrator PowerShell**:
 
@@ -135,6 +135,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-render-data.ps
 ```
 
 Paste the new token only at the hidden prompt. The reset removes every farm and farm-bound record, deletes owner, worker and extra technician accounts, and revokes all sessions. It aborts unless both cloud credentials are present and the preserved technician and at least one administrator exist. After the deletion, it reactivates `team.admin` with a newly generated temporary password written to a private `.local` file.
+
 - Workers cannot manage accounts, farm setup, flock cycles or sensors. Only technicians complete or change the site survey, approve the generated plan, record installation/commissioning checks, activate a verified operating mode and manage devices; owners manage flock cycles.
 - All server requests validate active session, current role and farm membership. Strict schemas reject role injection and unsupported actions.
 - Temporary passwords require a change before farm access. Minimum password length is 12 characters. Changing/resetting a password or disabling a worker revokes existing sessions.
@@ -160,21 +161,25 @@ Local SQLite uses WAL, foreign keys and serialized farm mutations. Turso writes 
 
 ## API and tests
 
-| Routes                                                      | Purpose                                                    |
-| ----------------------------------------------------------- | ---------------------------------------------------------- |
-| `GET /health`                                               | Non-sensitive service/version check                        |
-| `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/me` | Session lifecycle                                          |
-| `POST /v1/auth/password`                                    | Current-password-verified change and session rotation      |
-| `POST /v1/admin/farms`                                      | Admin-only farm/customer and owner provisioning            |
-| `GET /v1/farms/:farmId`                                     | Authorized farm snapshot and revision                      |
-| `POST /v1/telemetry/ingest`                                 | Hub-authenticated versioned reading batch                  |
-| `GET /v1/farms/:farmId/telemetry/latest`                    | Latest normalized reading and node health                  |
-| `GET /v1/farms/:farmId/telemetry/history`                   | Bounded per-node metric history                            |
-| `POST /v1/farms/:farmId/actions`                            | Validated, authorized record mutation                      |
-| `POST /v1/farms/:farmId/import`                             | Technician's one-time legacy phone import                  |
-| `GET/POST /v1/farms/:farmId/workers`                        | Owner lists/creates workers                                |
-| `PATCH /v1/farms/:farmId/workers/:id`                       | Owner renames/enables/disables a worker                    |
-| `POST /v1/farms/:farmId/workers/:id/password`               | Owner resets a worker password                             |
+| Routes                                                      | Purpose                                               |
+| ----------------------------------------------------------- | ----------------------------------------------------- |
+| `GET /health`                                               | Non-sensitive service/version check                   |
+| `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/me` | Session lifecycle                                     |
+| `POST /v1/auth/password`                                    | Current-password-verified change and session rotation |
+| `POST /v1/admin/farms`                                      | Admin-only farm/customer and owner provisioning       |
+| `GET /v1/admin/farms`                                       | Admin farm, hub, node and latest-reading overview     |
+| `GET /v1/farms/:farmId`                                     | Authorized farm snapshot and revision                 |
+| `GET /v1/farms/:farmId/devices`                             | Shared persistent hub/node inventory                  |
+| `POST /v1/farms/:farmId/nodes`                              | Technician registers a node under the active hub      |
+| `DELETE /v1/farms/:farmId/nodes/:nodeId`                    | Technician deactivates a node; history is retained    |
+| `POST /v1/telemetry/ingest`                                 | Hub-authenticated versioned reading batch             |
+| `GET /v1/farms/:farmId/telemetry/latest`                    | Latest normalized reading and node health             |
+| `GET /v1/farms/:farmId/telemetry/history`                   | Bounded per-node metric history                       |
+| `POST /v1/farms/:farmId/actions`                            | Validated, authorized record mutation                 |
+| `POST /v1/farms/:farmId/import`                             | Technician's one-time legacy phone import             |
+| `GET/POST /v1/farms/:farmId/workers`                        | Owner lists/creates workers                           |
+| `PATCH /v1/farms/:farmId/workers/:id`                       | Owner renames/enables/disables a worker               |
+| `POST /v1/farms/:farmId/workers/:id/password`               | Owner resets a worker password                        |
 
 ```powershell
 npm run typecheck
@@ -188,6 +193,54 @@ The backend-owned state rules and API types live under `src/shared`; the reposit
 Physical LoRa ingestion, local control-rule processing, node command acknowledgment, push delivery and Python model jobs remain unimplemented. The HTTP telemetry boundary is production-shaped but currently exercised by the JavaScript gateway simulator. Because site-specific alert thresholds are still an open safety decision, valid live values are labeled `Reading only`; the service generates technical stale/invalid/warm-up alerts without inventing poultry safety limits. Physical Pi commissioning and conflict testing under simultaneous offline/cloud edits are still required. Python runs bounded AI jobs without blocking API requests. Historical FastAPI backend instructions are superseded by the JavaScript backend decision.
 
 ## Telemetry simulator setup
+
+### Laptop hub pilot
+
+The laptop can now operate as the local hub with the same authenticated telemetry contract that
+the Raspberry Pi will use later. From `backend/`, create its one-time pairing QR:
+
+```powershell
+npm run hub:create -- --wifi https://YOUR-LAPTOP-IP:8443
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-laptop-hub.ps1
+```
+
+The command writes the private simulator identity to `.local/hub-config.json` and a scannable SVG
+to `.local/hub-config.json.qr.svg`. On the technician interface, select Local WiFi or USB cable,
+scan the QR, and register it to the currently selected farm. A farm permits one active hub. A
+second pairing becomes a replacement request and remains inactive until an administrator approves
+it. Hub registration intentionally creates no sensor nodes: the technician adds each uniquely
+identified node from Device management after the hub is paired. The database is the source of
+truth for this inventory; removing a node deactivates it without deleting its history.
+
+For USB access, keep the cable authorized and run:
+
+```powershell
+adb reverse tcp:8443 tcp:8443
+```
+
+Open `https://localhost:8443/developer` on the laptop to inspect the live SQLite row count and
+size, farm/hub/node registration, earliest/latest history coverage, reading provenance, and latest
+transmission. Once a claimed hub has at least one node, the backend automatically starts a single
+one-minute simulator worker. On its first run for each node, that worker generates 183 days of
+hourly readings and submits them through the same authenticated ingestion API used by hardware.
+It uses a per-hub process lock and a durable spool, so frontend sessions cannot duplicate readings
+and an interrupted upload resumes in order. The console can stop/restart the simulator, export
+readings to CSV, and create checkpointed database backups.
+It is restricted to loopback access and is disabled in cloud mode. The default database remains
+`.local/coopguard.sqlite`; set `CG_DB_PATH` to use a different durable location.
+
+Every hub, node, and sensor reading has a `source` value of `simulated` or `hardware`. Current
+dashboards and Trends are built from the same latest/history queries. Trends can show Today, Week,
+Month, 3 months, or 6 months and can filter the whole-house average or a single node. The laptop
+simulator reports the full standard five-sensor payload per node: temperature, relative humidity,
+ammonia, carbon dioxide, and litter moisture. Therefore three installed nodes provide three litter
+moisture measurement locations rather than three unrelated litter fields in one node.
+
+The simulator is the replaceable transport boundary. A Raspberry Pi/LoRa gateway will use the
+same private hub credentials, node inventory bootstrap, and `/v1/telemetry/ingest` schema, but send
+`source: "hardware"`. Automated equipment control remains outside this monitoring-only pilot.
+
+### Legacy virtual-device provisioning
 
 The technician must first complete the site survey and pair the virtual hub and full-sensor nodes. Then create a one-time private hub configuration against the chosen database:
 

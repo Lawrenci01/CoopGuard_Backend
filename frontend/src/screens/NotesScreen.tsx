@@ -15,7 +15,7 @@ export function NotesScreen() {
   const selectedKind = soundEnabled ? kind : 'environment';
 
   return (
-    <ScreenFrame tab="Notes" title="Daily observations">
+    <ScreenFrame tab="Notes" title="Inspection notes" subtitle="Human observations from the farm">
       <Choice
         values={availableKinds}
         selected={selectedKind}

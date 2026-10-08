@@ -31,6 +31,7 @@ import {
   validDeviceSimulation,
   type DeviceSimulation,
 } from '../domain/deviceSimulation';
+import { houseGrid, positionInSection, sectionAtPosition } from '../domain/houseLayout';
 
 export const LOCAL_FARM_KEY = 'coopguard.localFarm.v1';
 export interface FlockCycle {
@@ -146,7 +147,10 @@ export function seedLocalFarm(now = Date.now()): LocalFarmState {
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const roles = ['owner', 'worker', 'technician'];
-const sections = ['A', 'B', 'C'];
+const layoutForState = (state: LocalFarmState) => {
+  const house = state.site.survey?.house ?? state.house;
+  return houseGrid(house?.lengthMetres ?? 90, house?.widthMetres ?? 12);
+};
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 const text = (value: unknown, limit = 80): value is string =>
@@ -473,13 +477,20 @@ export class LocalFarmRepository {
         const hub = s.deviceSimulation.hub;
         if (!hub || hub.status !== 'reporting')
           throw new Error('Pair the virtual hub before creating nodes.');
-        if (!sections.includes(a.section)) throw new Error('Choose a valid house section.');
+        const layout = layoutForState(s);
+        if (!layout.sections.includes(a.section)) throw new Error('Choose a valid house section.');
+        const position = s.deviceSimulation.nodes.filter(
+          (node) => node.section === a.section,
+        ).length;
+        const placement = positionInSection(a.section, layout, position, position + 1);
         const suffix = Math.random().toString(36).slice(2, 10).toUpperCase();
         s.deviceSimulation.nodes.push({
           id: `NODE-${suffix}`,
           farmCode: a.farmCode,
           pairingCode: Math.random().toString(36).slice(2, 14).toUpperCase().padEnd(12, '0'),
           section: a.section,
+          x: placement.x,
+          y: placement.y,
           status: 'created',
           createdAt: now,
           firmwareVersion: '0.1.0-sim',
@@ -514,11 +525,12 @@ export class LocalFarmRepository {
         }
         break;
       }
-      case 'removeVirtualDevice':
+      case 'removeVirtualDevice': {
         requireTechnicianRole();
-        if (['normal_monitor', 'normal_control'].includes(s.site.status))
-          throw new Error('Deactivate the installed house before removing paired devices.');
-        if (s.deviceSimulation.hub?.id === a.id) {
+        const removingHub = s.deviceSimulation.hub?.id === a.id;
+        if (removingHub && ['normal_monitor', 'normal_control'].includes(s.site.status))
+          throw new Error('The active farm hub cannot be removed. Replace or deactivate it first.');
+        if (removingHub) {
           s.deviceSimulation = emptyDeviceSimulation();
         } else {
           const count = s.deviceSimulation.nodes.length;
@@ -527,6 +539,7 @@ export class LocalFarmRepository {
             throw new Error('The virtual device was not found.');
         }
         break;
+      }
       case 'updateVirtualFirmware': {
         requireTechnicianRole();
         const device =
@@ -592,8 +605,9 @@ export class LocalFarmRepository {
           ].includes(s.site.status)
         )
           throw new Error('Approve the plan and start installation before adding nodes.');
+        const layout = layoutForState(s);
         if (
-          !sections.includes(a.section) ||
+          !layout.sections.includes(a.section) ||
           !a.calibrated ||
           (a.control && (!a.tested || s.context.controlMode !== 'full'))
         )
@@ -611,8 +625,7 @@ export class LocalFarmRepository {
           id: `sensor-${number}`,
           number,
           section: a.section,
-          x: (sections.indexOf(a.section) + 0.5) / 3,
-          y: 0.5,
+          ...positionInSection(a.section, layout),
           control: a.control,
         });
         s.calibration[`sensor-${number}`] = now;
@@ -622,16 +635,17 @@ export class LocalFarmRepository {
         if (s.site.survey) requireTechnicianRole();
         else requireTechnician();
         const sensor = s.snapshot.sensors.find((n) => n.id === a.id);
+        const layout = layoutForState(s);
         if (
           !sensor ||
-          !sections.includes(a.section) ||
+          !layout.sections.includes(a.section) ||
           !finite(a.x) ||
           !finite(a.y) ||
-          a.x < 0.05 ||
-          a.x > 0.95 ||
-          a.y < 0.1 ||
-          a.y > 0.9 ||
-          Math.min(2, Math.floor(a.x * 3)) !== sections.indexOf(a.section)
+          a.x < 0 ||
+          a.x > 1 ||
+          a.y < 0 ||
+          a.y > 1 ||
+          sectionAtPosition(a.x, a.y, layout) !== a.section
         )
           throw new Error('Choose a position inside the selected section.');
         Object.assign(sensor, { section: a.section, x: a.x, y: a.y });
@@ -736,6 +750,6 @@ export class LocalFarmRepository {
         break;
     }
     if (s.site.survey || s.deviceSimulation.hub || s.deviceSimulation.nodes.length)
-      s.snapshot = snapshotForDeviceSimulation(s.snapshot, s.deviceSimulation);
+      s.snapshot = snapshotForDeviceSimulation(s.snapshot, s.deviceSimulation, layoutForState(s));
   }
 }

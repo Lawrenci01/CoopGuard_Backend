@@ -5,18 +5,19 @@ import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigat
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
-import { DMSans_400Regular } from '@expo-google-fonts/dm-sans/400Regular';
-import { DMSans_500Medium } from '@expo-google-fonts/dm-sans/500Medium';
-import { DMSans_700Bold } from '@expo-google-fonts/dm-sans/700Bold';
+import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
+import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
+import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
 import {
   Bell,
   ChartNoAxesCombined,
   CheckCircle2,
+  Eye,
   House,
-  LayoutDashboard,
   Map,
   Radio,
   NotebookPen,
+  Warehouse,
   type LucideIcon,
 } from 'lucide-react-native';
 import { en, relativeTime } from './src/i18n/en';
@@ -27,6 +28,7 @@ import { AuthProvider, useAuth } from './src/state/AuthProvider';
 import { FarmProvider, useFarm } from './src/state/FarmProvider';
 import { Button, Card, Chip, Label, styles } from './src/components/ui';
 import { AccountSheet } from './src/components/AccountSheet';
+import { BrandMark } from './src/components/Brand';
 import { flockDay } from './src/services/localFarmRepository';
 import { deviceSetupProgress } from './src/domain/deviceSimulation';
 import { DashboardScreen } from './src/screens/DashboardScreen';
@@ -36,13 +38,16 @@ import { AnalyticsScreen } from './src/screens/AnalyticsScreen';
 import { DevicesScreen } from './src/screens/DevicesScreen';
 import { NotesScreen } from './src/screens/NotesScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
-import { TechnicianFarmSelector } from './src/components/TechnicianFarmSelector';
+import {
+  TechnicianFarmSelector,
+  type TechnicianFarmSelection,
+} from './src/components/TechnicianFarmSelector';
 import { TechnicianSetupWorkspace } from './src/components/TechnicianSetupWorkspace';
 import { AdminScreen } from './src/screens/AdminScreen';
 
 const Tabs = createBottomTabNavigator<Record<TabName, undefined>>();
 const icons: Record<TabName, LucideIcon> = {
-  Dashboard: LayoutDashboard,
+  Dashboard: House,
   Alerts: Bell,
   'Heat Map': Map,
   Analytics: ChartNoAxesCombined,
@@ -60,14 +65,15 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
         borderTopWidth: 1,
         borderColor: colors.border,
         paddingTop: 8,
-        paddingBottom: Math.max(insets.bottom, 9),
+        paddingBottom: Math.max(insets.bottom, 14),
         flexDirection: 'row',
+        minHeight: 76,
       }}
     >
       {state.routes.map((route, index) => {
         const name = route.name as TabName,
           active = state.index === index,
-          Icon = name === 'Devices' && context.role === 'owner' ? House : icons[name];
+          Icon = name === 'Devices' && context.role === 'owner' ? Warehouse : icons[name];
         const label = name === 'Devices' && context.role === 'owner' ? 'Farm' : en.nav[name];
         return (
           <Pressable
@@ -86,7 +92,7 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
             }}
             style={{
               flex: 1,
-              minHeight: 52,
+              minHeight: 54,
               alignItems: 'center',
               justifyContent: 'center',
               gap: 5,
@@ -94,32 +100,51 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
             }}
           >
             <View>
-              <Icon size={23} color={active ? colors.green : colors.muted} />
+              <Icon size={21} color={active ? colors.green : '#89908B'} strokeWidth={1.8} />
               {name === 'Alerts' && count > 0 && (
                 <View
                   style={{
                     position: 'absolute',
-                    right: -3,
-                    top: -2,
-                    width: 7,
-                    height: 7,
-                    borderRadius: 5,
-                    backgroundColor: colors.amber,
+                    right: -10,
+                    top: -6,
+                    minWidth: 16,
+                    height: 16,
+                    paddingHorizontal: 4,
+                    borderRadius: 8,
+                    backgroundColor: colors.red,
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
-                />
+                >
+                  <Label weight="bold" style={{ color: '#fff', fontSize: 8, lineHeight: 10 }}>
+                    {count}
+                  </Label>
+                </View>
               )}
             </View>
             <Label
-              weight={active ? 'bold' : 'medium'}
+              weight="bold"
               style={{
-                fontSize: 11,
-                lineHeight: 16,
-                color: active ? colors.green : colors.muted,
+                fontSize: 9,
+                lineHeight: 13,
+                color: active ? colors.green : '#89908B',
                 textAlign: 'center',
               }}
             >
               {label}
             </Label>
+            {active && (
+              <View
+                style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  width: 21,
+                  height: 2,
+                  borderRadius: 2,
+                  backgroundColor: colors.green,
+                }}
+              />
+            )}
           </Pressable>
         );
       })}
@@ -127,32 +152,46 @@ function Navigation({ state, navigation }: BottomTabBarProps) {
   );
 }
 function Header({ onAccount }: { onAccount: () => void }) {
-  const { data, context, now, syncing, connected, lastSyncedAt, pendingCount, readingSource } =
-      useFarm(),
+  const { data, now, syncing, connected, lastSyncedAt, pendingCount, readingSource } = useFarm(),
     auth = useAuth(),
     insets = useSafeAreaInsets();
   const r = auth.record!;
+  const farm = r.session.farms.find((item) => item.id === r.farmId);
+  const initials = r.session.account.name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
   return (
     <View
       style={{
         backgroundColor: colors.surface,
         borderBottomWidth: 1,
         borderColor: colors.border,
-        paddingHorizontal: 18,
-        paddingTop: insets.top + 10,
-        paddingBottom: 8,
-        gap: 6,
       }}
     >
-      <View style={[styles.row, { justifyContent: 'space-between' }]}>
-        <House size={23} color={colors.green} />
+      <View
+        style={[
+          styles.row,
+          {
+            justifyContent: 'space-between',
+            backgroundColor: colors.greenDark,
+            paddingHorizontal: 20,
+            paddingTop: insets.top + 20,
+            paddingBottom: 18,
+          },
+        ]}
+      >
+        <BrandMark size={46} />
         <View style={{ flex: 1 }}>
-          <Label weight="bold" style={{ fontSize: 15 }}>
-            {data.house?.houseName ??
-              r.session.farms.find((f) => f.id === r.farmId)?.name ??
-              'Your farm'}
+          <Label style={{ fontSize: 10, color: '#FFFFFF9E' }}>
+            COOPGUARD {'\u00B7'} {farm?.code ?? 'FARM'}
           </Label>
-          <Label style={{ fontSize: 11, color: colors.muted }}>
+          <Label weight="bold" style={{ fontSize: 19, lineHeight: 25, color: '#FFFFFF' }}>
+            {data.house?.farmName ?? farm?.name ?? 'Your farm'}
+          </Label>
+          <Label style={{ fontSize: 10, color: '#FFFFFFB8' }}>
             {data.flock
               ? `Day ${flockDay(data.flock, now)} · ${data.flock.birds.toLocaleString()} birds`
               : 'No active flock'}
@@ -163,32 +202,68 @@ function Header({ onAccount }: { onAccount: () => void }) {
           accessibilityRole="button"
           accessibilityLabel="Your account"
           onPress={onAccount}
-          style={{ minHeight: 44, justifyContent: 'center', gap: 3 }}
+          style={{
+            width: 40,
+            height: 40,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#FFFFFF1F',
+            borderWidth: 1,
+            borderColor: '#FFFFFF33',
+            borderRadius: 12,
+          }}
         >
-          <Chip tone={readingSource === 'telemetry' ? 'green' : 'muted'}>
-            {readingSource === 'telemetry'
-              ? connected
-                ? 'TELEMETRY'
-                : 'SAVED TELEMETRY'
-              : 'SAMPLE READINGS'}
-          </Chip>
-          <Label weight="medium" style={{ fontSize: 11, color: colors.green, textAlign: 'right' }}>
-            {en.role[context.role]} · Account
+          <Label weight="bold" style={{ color: '#FFFFFF', fontSize: 11 }}>
+            {initials}
           </Label>
         </Pressable>
       </View>
-      <Label
-        testID="connection-status"
-        accessibilityLiveRegion="polite"
-        style={{ fontSize: 11, color: connected ? colors.muted : colors.amber }}
+      <View
+        style={{
+          minHeight: 40,
+          paddingHorizontal: 20,
+          paddingVertical: 7,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 7,
+        }}
       >
-        {syncing
-          ? 'Syncing with farm server…'
-          : connected
-            ? `${auth.activeConnection === 'hub' ? 'Farm hub' : 'Cloud'} - synced ${relativeTime(lastSyncedAt, now).toLowerCase()}`
-            : 'Server unavailable · saved data'}
-        {pendingCount ? ` · ${pendingCount} note(s) waiting` : ''}
-      </Label>
+        <Chip tone={connected ? 'green' : 'muted'}>
+          {auth.activeConnection === 'hub' ? 'Farm hub' : connected ? 'Cloud' : 'Offline'}
+        </Chip>
+        <Chip
+          tone={
+            readingSource === 'hardware'
+              ? 'green'
+              : readingSource === 'simulated'
+                ? 'blue'
+                : 'muted'
+          }
+        >
+          {readingSource === 'hardware'
+            ? 'Hardware'
+            : readingSource === 'simulated'
+              ? 'Simulated'
+              : 'Sample'}
+        </Chip>
+        <Label
+          testID="connection-status"
+          accessibilityLiveRegion="polite"
+          style={{
+            flex: 1,
+            fontSize: 8,
+            color: connected ? colors.muted : colors.amber,
+            textAlign: 'right',
+          }}
+        >
+          {syncing
+            ? 'Syncing with farm server…'
+            : connected
+              ? `${auth.activeConnection === 'hub' ? 'Farm hub' : 'Cloud'} - synced ${relativeTime(lastSyncedAt, now).toLowerCase()}`
+              : 'Server unavailable · saved data'}
+          {pendingCount ? ` · ${pendingCount} note(s) waiting` : ''}
+        </Label>
+      </View>
     </View>
   );
 }
@@ -200,7 +275,46 @@ const components = {
   Devices: DevicesScreen,
   Notes: NotesScreen,
 };
-function FarmApp() {
+function OwnerPreviewBanner({ farmCode, onExit }: { farmCode: string; onExit: () => void }) {
+  return (
+    <View
+      testID="owner-preview-banner"
+      style={{
+        backgroundColor: colors.blueSoft,
+        borderBottomWidth: 1,
+        borderColor: '#CFE0EC',
+        paddingHorizontal: 18,
+        paddingVertical: 9,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 9,
+      }}
+    >
+      <Eye size={18} color={colors.blue} />
+      <View style={{ flex: 1 }}>
+        <Label weight="bold" style={{ fontSize: 11 }}>
+          Owner interface preview
+        </Label>
+        <Label style={{ color: colors.muted, fontSize: 9 }}>
+          Scanned farm {farmCode} · read-only
+        </Label>
+      </View>
+      <Button testID="exit-owner-preview" compact variant="secondary" onPress={onExit}>
+        Exit preview
+      </Button>
+    </View>
+  );
+}
+
+function FarmApp({
+  ownerPreview,
+  previewFarmCode,
+  onExitOwnerPreview,
+}: {
+  ownerPreview?: boolean;
+  previewFarmCode?: string;
+  onExitOwnerPreview?: () => void;
+} = {}) {
   const { toast, ready, loadError, retryLoad, context, data } = useFarm(),
     auth = useAuth(),
     insets = useSafeAreaInsets();
@@ -246,12 +360,27 @@ function FarmApp() {
         }}
       >
         <View style={{ width: '100%', maxWidth: 620, alignSelf: 'center', gap: 18 }}>
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
+          {ownerPreview && previewFarmCode && onExitOwnerPreview && (
+            <OwnerPreviewBanner farmCode={previewFarmCode} onExit={onExitOwnerPreview} />
+          )}
+          <View
+            style={[
+              styles.row,
+              {
+                justifyContent: 'space-between',
+                backgroundColor: colors.greenDark,
+                borderRadius: 18,
+                padding: 18,
+              },
+            ]}
+          >
+            <BrandMark size={50} />
             <View style={{ flex: 1, gap: 3 }}>
-              <Label weight="bold" style={{ fontSize: 21 }}>
+              <Label style={{ color: '#FFFFFF9E', fontSize: 10 }}>Farm setup</Label>
+              <Label weight="bold" style={{ fontSize: 21, color: '#FFFFFF' }}>
                 {farm.name}
               </Label>
-              <Label style={{ color: colors.muted }}>Farm ID {farm.code}</Label>
+              <Label style={{ color: '#FFFFFFB8' }}>Farm ID {farm.code}</Label>
             </View>
             <Button compact variant="secondary" onPress={() => setAccount(true)}>
               Account
@@ -283,6 +412,7 @@ function FarmApp() {
   }
   return (
     <View style={{ flex: 1 }}>
+      <StatusBar style="light" />
       <NavigationContainer
         theme={{
           ...DefaultTheme,
@@ -307,7 +437,14 @@ function FarmApp() {
           screenOptions={{
             tabBarPosition: 'bottom',
             animation: 'none',
-            header: () => <Header onAccount={() => setAccount(true)} />,
+            header: () => (
+              <>
+                <Header onAccount={() => setAccount(true)} />
+                {ownerPreview && previewFarmCode && onExitOwnerPreview && (
+                  <OwnerPreviewBanner farmCode={previewFarmCode} onExit={onExitOwnerPreview} />
+                )}
+              </>
+            ),
             sceneStyle: { backgroundColor: colors.background },
           }}
         >
@@ -363,12 +500,32 @@ function SessionGate() {
 }
 function TechnicianSession() {
   const auth = useAuth();
-  const [selected, setSelected] = useState(false);
+  const [selection, setSelection] = useState<TechnicianFarmSelection | null>(null);
+  const [ownerPreview, setOwnerPreview] = useState(false);
   const r = auth.record!;
-  if (!selected) return <TechnicianFarmSelector onSelected={() => setSelected(true)} />;
+  if (!selection) return <TechnicianFarmSelector onSelected={setSelection} />;
+  const target = r.session.farms.find((farm) => farm.id === r.farmId);
+  const canPreviewOwner =
+    selection.method === 'qr' && !!target && target.code.toUpperCase() === selection.farmCode;
+  const showingOwnerPreview = ownerPreview && canPreviewOwner;
   return (
-    <FarmProvider key={`${auth.server}:${r.session.account.id}:${r.farmId}:technician`}>
-      <TechnicianSetupWorkspace />
+    <FarmProvider
+      key={`${auth.server}:${r.session.account.id}:${r.farmId}:technician`}
+      roleOverride={showingOwnerPreview ? 'owner' : undefined}
+      readOnly={showingOwnerPreview}
+    >
+      {showingOwnerPreview ? (
+        <FarmApp
+          ownerPreview
+          previewFarmCode={selection.farmCode}
+          onExitOwnerPreview={() => setOwnerPreview(false)}
+        />
+      ) : (
+        <TechnicianSetupWorkspace
+          canPreviewOwner={canPreviewOwner}
+          onPreviewOwner={() => setOwnerPreview(true)}
+        />
+      )}
     </FarmProvider>
   );
 }
@@ -379,15 +536,17 @@ function Loading() {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        gap: 18,
         backgroundColor: colors.background,
       }}
     >
+      <BrandMark size={64} />
       <ActivityIndicator color={colors.green} />
     </View>
   );
 }
 export default function App() {
-  const [loaded, error] = useFonts({ DMSans_400Regular, DMSans_500Medium, DMSans_700Bold });
+  const [loaded, error] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_700Bold });
   if (!loaded && !error) return <Loading />;
   return (
     <SafeAreaProvider>

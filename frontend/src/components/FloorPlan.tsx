@@ -1,201 +1,212 @@
-import React from 'react';
 import { Pressable, View, useWindowDimensions } from 'react-native';
-import Svg, { Line, Path, Rect } from 'react-native-svg';
-import { summarizeReadings } from '../domain/readings';
+import { Radio, Wind } from 'lucide-react-native';
 import { colors } from '../theme';
 import type { MetricKey, Sensor } from '../domain/types';
 import { metricUnits } from '../data/fixtures';
 import { en } from '../i18n/en';
-import { Chip, Label } from './ui';
+import { houseGrid, sectionIndex } from '../domain/houseLayout';
+import { Label } from './ui';
+
+const displayValue = (sensor: Sensor, metric: MetricKey) => {
+  if (!sensor.online) return String.fromCharCode(8212);
+  const value = sensor.readings[metric];
+  return `${value.toFixed(metric === 'temperature' || metric === 'ammonia' ? 1 : 0)}${
+    metric === 'temperature' ? String.fromCharCode(176) : ''
+  }`;
+};
 
 export function FloorPlan({
   sensors,
   metric,
   onSelect,
+  lengthMetres = 90,
+  widthMetres = 12,
   compact = false,
 }: {
   sensors: Sensor[];
   metric: MetricKey;
   onSelect: (sensor: Sensor) => void;
+  lengthMetres?: number;
+  widthMetres?: number;
   compact?: boolean;
 }) {
-  const { width } = useWindowDimensions();
-  const small = width < 600;
+  const window = useWindowDimensions();
+  const grid = houseGrid(lengthMetres, widthMetres);
+  const planWidth = Math.min(Math.max(window.width - 56, 280), 760);
+  // Rotate the physical plan for a phone: house length runs top-to-bottom,
+  // while house width runs left-to-right.
+  const displayColumns = grid.rows;
+  const displayRows = grid.columns;
+  const minimumCellHeight = compact ? 92 : 120;
+  const maximumCellHeight = compact ? 120 : 150;
+  const proportionalHeight = planWidth * (grid.lengthMetres / grid.widthMetres);
+  const planHeight = Math.max(
+    displayRows * minimumCellHeight,
+    Math.min(proportionalHeight, displayRows * maximumCellHeight),
+  );
+  const markerWidth = compact ? 60 : 68;
+  const markerHeight = compact ? 54 : 62;
+  const innerWidth = planWidth - 24;
+
   return (
     <View>
-      <View style={{ flexDirection: 'row', marginBottom: 14 }}>
-        {(['A', 'B', 'C'] as const).map((section) => {
-          const summary = summarizeReadings(
-            sensors.filter((sensor) => sensor.section === section),
-            metric,
-          );
-          return (
-            <View key={section} style={{ flex: 1, alignItems: 'center', gap: 5 }}>
-              <Label weight="bold" style={{ fontSize: 12 }}>
-                {en.section} {section}
-              </Label>
-              {!compact && (
-                <Chip
-                  tone={
-                    summary.condition === 'urgent'
-                      ? 'red'
-                      : summary.condition === 'watch'
-                        ? 'amber'
-                        : summary.condition === 'unavailable' ||
-                            summary.condition === 'unclassified'
-                          ? 'muted'
-                          : 'green'
-                  }
-                >
-                  {summary.condition === 'unavailable'
-                    ? en.incompleteReadings
-                    : en.statuses[summary.condition]}
-                </Chip>
-              )}
-            </View>
-          );
-        })}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
+        <Label weight="bold" style={{ fontSize: 11 }}>
+          {grid.lengthMetres} m × {grid.widthMetres} m
+        </Label>
+        <Label style={{ color: colors.muted, fontSize: 10 }}>
+          {grid.count} {grid.count === 1 ? 'section' : 'sections'} · portrait view
+        </Label>
       </View>
-      <View style={{ height: compact ? 180 : small ? 250 : 270 }}>
-        <Svg width="100%" height="100%" viewBox="0 0 900 260" preserveAspectRatio="none">
-          <Path
-            d="M 22 35 L 50 15 H 850 L 878 35 V 225 L 850 245 H 50 L 22 225 Z"
-            fill="#F5F7F0"
-            stroke="#B8C8B4"
-            strokeWidth="2"
+
+      <View
+        style={{
+          width: planWidth,
+          marginTop: 8,
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: '#CBD5CD',
+          borderRadius: 16,
+          paddingHorizontal: 12,
+          paddingTop: 10,
+          overflow: 'hidden',
+        }}
+      >
+        <View style={{ minHeight: 40, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+          <Label style={{ color: '#89918B', fontSize: 8, letterSpacing: 0.7 }}>INLET</Label>
+          <Wind
+            size={18}
+            color="#89918B"
+            strokeWidth={1.7}
+            style={{ transform: [{ rotate: '90deg' }] }}
           />
-          <Rect
-            x="305"
-            y="17"
-            width="290"
-            height="226"
-            fill={metric === 'temperature' ? '#FAEED9' : '#EDF3E9'}
-          />
-          <Line x1="303" x2="303" y1="17" y2="243" stroke="#C7D1C2" strokeDasharray="6 6" />
-          <Line x1="597" x2="597" y1="17" y2="243" stroke="#C7D1C2" strokeDasharray="6 6" />
-          <Line
-            x1="25"
-            x2="875"
-            y1="130"
-            y2="130"
-            stroke="#D7DFD0"
-            strokeWidth="1"
-            strokeDasharray="4 7"
-          />
-          {[90, 210, 360, 490, 650, 770].map((x) => (
-            <React.Fragment key={x}>
-              <Rect x={x} y="10" width="50" height="9" fill="#E2E9DB" stroke="#B8C8B4" />
-              <Rect x={x} y="241" width="50" height="9" fill="#E2E9DB" stroke="#B8C8B4" />
-            </React.Fragment>
-          ))}
-        </Svg>
-        {sensors.map((sensor) => {
-          const condition = sensor.online ? sensor.conditions[metric] : 'unavailable';
-          const color =
-            condition === 'urgent'
-              ? colors.red
-              : condition === 'watch'
-                ? colors.amber
-                : condition === 'good'
-                  ? colors.green
-                  : colors.muted;
-          const fill =
-            condition === 'urgent'
-              ? colors.redSoft
-              : condition === 'watch'
-                ? colors.amberSoft
-                : condition === 'good'
-                  ? colors.greenSoft
-                  : '#F6F7F2';
-          return (
-            <Pressable
-              key={sensor.id}
-              testID={`map-${sensor.id}`}
-              accessibilityRole="button"
-              accessibilityLabel={`${en.sensor} ${sensor.number}, ${en.section} ${sensor.section}, ${sensor.online ? `${sensor.readings[metric].toFixed(metric === 'temperature' || metric === 'ammonia' ? 1 : 0)} ${metricUnits[metric]}` : en.offline}`}
-              onPress={() => onSelect(sensor)}
-              style={({ pressed }) => [
-                {
-                  position: 'absolute',
-                  left: `${sensor.x * 100}%`,
-                  top: `${sensor.y * 100}%`,
-                  width: small ? 46 : 62,
-                  minHeight: 52,
-                  marginLeft: small ? -23 : -31,
-                  marginTop: -26,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 3,
-                  transform: [{ scale: pressed ? 1.1 : 1 }],
-                },
-              ]}
-            >
+        </View>
+
+        <View style={{ width: innerWidth, height: planHeight }}>
+          {grid.sections.map((section) => {
+            const index = sectionIndex(section);
+            const houseColumn = index % grid.columns;
+            const houseRow = Math.floor(index / grid.columns);
+            const displayColumn = houseRow;
+            const displayRow = houseColumn;
+            const cellWidth = innerWidth / displayColumns;
+            const cellHeight = planHeight / displayRows;
+            return (
               <View
+                key={section}
+                pointerEvents="none"
                 style={{
-                  width: 25,
-                  height: 25,
-                  borderRadius: 20,
-                  borderWidth: 1.5,
-                  borderStyle: sensor.online ? 'solid' : 'dashed',
-                  borderColor: color,
+                  position: 'absolute',
+                  left: displayColumn * cellWidth,
+                  top: displayRow * cellHeight,
+                  width: cellWidth,
+                  height: cellHeight,
+                  borderLeftWidth: 1,
+                  borderTopWidth: 1,
+                  borderRightWidth: displayColumn === displayColumns - 1 ? 1 : 0,
+                  borderBottomWidth: displayRow === displayRows - 1 ? 1 : 0,
+                  borderColor: '#D5DED7',
+                  backgroundColor:
+                    displayRow % 2 === displayColumn % 2 ? '#FBFCFB' : colors.surface,
+                  padding: 8,
+                }}
+              >
+                <Label weight="bold" style={{ color: '#7C867E', fontSize: 8, letterSpacing: 0.5 }}>
+                  SECTION {section}
+                </Label>
+              </View>
+            );
+          })}
+
+          {sensors.map((sensor) => {
+            const condition = sensor.online ? sensor.conditions[metric] : 'unavailable';
+            const warm = condition === 'watch' || condition === 'urgent';
+            const unavailable = condition === 'unavailable';
+            const color = warm ? colors.amber : unavailable ? colors.offline : colors.green;
+            const fill = warm ? '#FFF5DF' : unavailable ? '#F0F1F0' : '#EDF7F0';
+            const border = warm ? '#E4BD70' : unavailable ? colors.offline : '#B8D1BF';
+            const displayX = Math.min(0.96, Math.max(0.04, sensor.y));
+            const displayY = Math.min(0.98, Math.max(0.02, sensor.x));
+            return (
+              <Pressable
+                key={sensor.id}
+                testID={`map-${sensor.id}`}
+                accessibilityRole="button"
+                accessibilityLabel={`${en.sensor} ${sensor.number}, ${en.section} ${sensor.section}, ${
+                  sensor.online
+                    ? `${sensor.readings[metric].toFixed(
+                        metric === 'temperature' || metric === 'ammonia' ? 1 : 0,
+                      )} ${metricUnits[metric]}`
+                    : en.offline
+                }`}
+                onPress={() => onSelect(sensor)}
+                style={({ pressed }) => ({
+                  position: 'absolute',
+                  left: displayX * innerWidth - markerWidth / 2,
+                  top: displayY * planHeight - markerHeight / 2,
+                  width: markerWidth,
+                  minHeight: markerHeight,
+                  borderRadius: 13,
+                  borderWidth: 1,
+                  borderStyle: unavailable ? 'dashed' : 'solid',
+                  borderColor: border,
                   backgroundColor: fill,
                   alignItems: 'center',
                   justifyContent: 'center',
-                }}
+                  opacity: pressed ? 0.7 : 1,
+                })}
               >
                 <View
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 5,
+                    position: 'absolute',
+                    top: -9,
+                    width: 23,
+                    height: 23,
+                    borderRadius: 12,
+                    borderWidth: 3,
+                    borderColor: colors.surface,
                     backgroundColor: color,
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
-                />
-              </View>
-              <Label
-                weight="bold"
-                style={{
-                  fontSize: small ? 10 : 12,
-                  lineHeight: 15,
-                  color,
-                }}
-              >
-                {sensor.online
-                  ? `${sensor.readings[metric].toFixed(metric === 'temperature' || metric === 'ammonia' ? 1 : 0)}${metric === 'temperature' ? '°' : ''}`
-                  : '—'}
-              </Label>
-            </Pressable>
-          );
-        })}
+                >
+                  <Radio size={13} color="#FFFFFF" strokeWidth={1.8} />
+                </View>
+                <Label weight="bold" style={{ color, fontSize: 15, lineHeight: 19 }}>
+                  {displayValue(sensor, metric)}
+                </Label>
+                <Label style={{ color, fontSize: 7 }} numberOfLines={1}>
+                  {sensor.id}
+                </Label>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={{ minHeight: 35, alignItems: 'center', justifyContent: 'center' }}>
+          <Label style={{ color: '#89918B', fontSize: 8, letterSpacing: 0.7 }}>EXHAUST</Label>
+        </View>
       </View>
+
       <View
         style={{
           flexDirection: 'row',
-          flexWrap: 'wrap',
           justifyContent: 'center',
+          flexWrap: 'wrap',
           gap: 12,
-          marginTop: 16,
+          paddingVertical: 13,
         }}
       >
-        <Chip tone="green" dot>
-          {en.statuses.good}
-        </Chip>
-        <Chip tone="amber" dot>
-          {en.statuses.watch}
-        </Chip>
-        {sensors.some((s) => s.online && s.conditions[metric] === 'urgent') && (
-          <Chip tone="red" dot>
-            {en.statuses.urgent}
-          </Chip>
-        )}
-        <Chip tone="muted" dot>
-          {en.statuses.unavailable}
-        </Chip>
-        {sensors.some((s) => s.online && s.conditions[metric] === 'unclassified') && (
-          <Chip tone="muted" dot>
-            {en.statuses.unclassified}
-          </Chip>
-        )}
+        {[
+          [colors.green, 'Reporting'],
+          [colors.amber, 'Attention'],
+          [colors.offline, 'Saved / offline'],
+        ].map(([color, label]) => (
+          <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} />
+            <Label style={{ color: colors.muted, fontSize: 8 }}>{label}</Label>
+          </View>
+        ))}
       </View>
     </View>
   );

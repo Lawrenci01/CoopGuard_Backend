@@ -5,15 +5,21 @@
     "scheme": "coopguard",
     "platforms": ["ios", "android"],
     "version": "0.7.1",
+    "icon": "./assets/coopguard-logo.png",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.coopguard.app"
+      "bundleIdentifier": "com.coopguard.app",
+      "icon": "./assets/coopguard-logo.png"
     },
     "android": {
       "versionCode": 16,
       "package": "com.coopguard.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/coopguard-logo.png",
+        "backgroundColor": "#F4F8F5"
+      },
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",

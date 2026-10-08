@@ -16,6 +16,7 @@ import { ArrowUpRight, X, type LucideIcon } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts } from '../theme';
 import { en } from '../i18n/en';
+import { BrandMark } from './Brand';
 
 export function Label({
   style,
@@ -54,7 +55,7 @@ export function Chip({
   const toneColors = {
     green: [colors.greenSoft, colors.green],
     amber: [colors.amberSoft, colors.amber],
-    muted: ['#F0F2EE', colors.muted],
+    muted: ['#EEF0EE', colors.muted],
     blue: [colors.blueSoft, colors.blue],
     red: [colors.redSoft, colors.red],
   };
@@ -62,7 +63,16 @@ export function Chip({
   return (
     <View style={[styles.chip, { backgroundColor }]}>
       {dot && <View style={{ width: 6, height: 6, borderRadius: 4, backgroundColor: color }} />}
-      <Label weight="medium" style={{ fontSize: 11, lineHeight: 17, color }}>
+      <Label
+        weight="bold"
+        style={{
+          fontSize: 10,
+          lineHeight: 16,
+          color,
+          letterSpacing: 0.35,
+          textTransform: 'uppercase',
+        }}
+      >
         {children}
       </Label>
     </View>
@@ -85,7 +95,13 @@ export function Button({
   testID?: string;
 }>) {
   const foreground =
-    variant === 'primary' ? '#fff' : variant === 'danger' ? colors.red : colors.green;
+    variant === 'primary'
+      ? '#fff'
+      : variant === 'danger'
+        ? colors.red
+        : variant === 'ghost'
+          ? colors.text
+          : colors.green;
   return (
     <Pressable
       testID={testID}
@@ -95,10 +111,14 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
-        compact && { minHeight: 44, paddingHorizontal: 13 },
+        compact && { width: 'auto', minHeight: 44, paddingHorizontal: 13, alignSelf: 'flex-start' },
         variant === 'primary' && { backgroundColor: colors.green },
-        variant === 'secondary' && { backgroundColor: colors.greenSoft },
-        variant === 'danger' && { backgroundColor: colors.redSoft },
+        variant === 'secondary' && {
+          backgroundColor: colors.surface,
+          borderColor: '#BDCBBF',
+        },
+        variant === 'ghost' && { backgroundColor: 'transparent' },
+        variant === 'danger' && { backgroundColor: colors.redSoft, borderColor: '#F2C9C4' },
         { opacity: disabled ? 0.4 : pressed ? 0.7 : 1 },
         pressed && !disabled && { transform: [{ translateY: -1 }] },
       ]}
@@ -200,6 +220,7 @@ export function Sheet({
           }}
         >
           <View style={[styles.sectionTitle, { marginBottom: 20 }]}>
+            <BrandMark size={34} />
             <Label
               accessibilityRole="header"
               weight="bold"
@@ -257,8 +278,13 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 20,
-    padding: 23,
+    borderRadius: 16,
+    padding: 17,
+    shadowColor: '#192D20',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.03,
+    shadowRadius: 7,
+    elevation: 1,
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   chip: {
@@ -266,16 +292,19 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
+    paddingVertical: 5,
+    borderRadius: 99,
     alignSelf: 'flex-start',
   },
   button: {
+    width: '100%',
     maxWidth: '100%',
-    minHeight: 44,
+    minHeight: 50,
     paddingHorizontal: 18,
     paddingVertical: 9,
-    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

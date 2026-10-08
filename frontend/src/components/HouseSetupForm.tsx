@@ -12,6 +12,7 @@ import {
   type Answer,
   type SiteSurvey,
 } from '../domain/siteWorkflow';
+import { houseGrid } from '../domain/houseLayout';
 import { colors } from '../theme';
 import { useAuth } from '../state/AuthProvider';
 import { useFarm } from '../state/FarmProvider';
@@ -103,7 +104,21 @@ function CheckRow({
   );
 }
 
-const dimensionValues = ['0', '8', '12', '16', '20', '30', '60', '90', '120'] as const;
+const dimensionValues = [
+  '0',
+  '8',
+  '12',
+  '16',
+  '20',
+  '30',
+  '60',
+  '90',
+  '120',
+  '150',
+  '180',
+  '240',
+  '300',
+] as const;
 const dimensionLabels: Record<(typeof dimensionValues)[number], string> = {
   '0': 'Not measured',
   '8': '8 m',
@@ -114,6 +129,10 @@ const dimensionLabels: Record<(typeof dimensionValues)[number], string> = {
   '60': '60 m',
   '90': '90 m',
   '120': '120 m',
+  '150': '150 m',
+  '180': '180 m',
+  '240': '240 m',
+  '300': '300 m',
 };
 const countValues = ['1', '2', '3', '4', '6', '8', '10', '12'] as const;
 const countLabels = Object.fromEntries(countValues.map((value) => [value, value])) as Record<
@@ -193,6 +212,19 @@ export function HouseSetupForm({ onDone }: { onDone: () => void; startOnSave?: b
       ...current,
       equipment: current.equipment.map((item, i) => (i === index ? { ...item, ...patch } : item)),
     }));
+  const setHouseDimension = (key: 'lengthMetres' | 'widthMetres', value: number) =>
+    setDraft((current) => {
+      const house = { ...current.house, [key]: value };
+      const layout = houseGrid(house.lengthMetres, house.widthMetres);
+      return {
+        ...current,
+        house,
+        sensors: {
+          ...current.sensors,
+          plannedNodes: Math.max(current.sensors.plannedNodes, layout.count),
+        },
+      };
+    });
   const finish = async () => {
     const problems = surveyMissing(draft);
     setMissing(problems);
@@ -210,6 +242,26 @@ export function HouseSetupForm({ onDone }: { onDone: () => void; startOnSave?: b
   };
 
   const planPreview = buildInstallationPlan(draft);
+  const layoutPreview = houseGrid(draft.house.lengthMetres, draft.house.widthMetres);
+  const selectedNodeCount = Math.max(draft.sensors.plannedNodes, layoutPreview.count);
+  const nodeCountValues = Array.from(
+    new Set([
+      ...countValues.map(Number).filter((value) => value >= layoutPreview.count),
+      layoutPreview.count,
+      selectedNodeCount,
+      Math.ceil(layoutPreview.count * 1.25),
+      Math.ceil(layoutPreview.count * 1.5),
+    ]),
+  )
+    .filter((value) => value >= 1 && value <= 1000)
+    .sort((a, b) => a - b)
+    .map(String);
+  const nodeCountLabels = Object.fromEntries(
+    nodeCountValues.map((value) => [
+      value,
+      Number(value) === layoutPreview.count ? `${value} · coverage minimum` : value,
+    ]),
+  ) as Record<string, string>;
   const capabilityPreview = houseCapabilities(draft, planPreview);
   const hasEquipment = draft.equipment.some((item) => item.count > 0);
   const controlRequested = draft.equipment.some((item) => item.count > 0 && item.intendedControl);
@@ -270,19 +322,27 @@ export function HouseSetupForm({ onDone }: { onDone: () => void; startOnSave?: b
             values={dimensionValues}
             selected={String(draft.house.lengthMetres) as (typeof dimensionValues)[number]}
             labels={dimensionLabels}
-            onSelect={(value) =>
-              setDraft((s) => ({ ...s, house: { ...s.house, lengthMetres: Number(value) } }))
-            }
+            onSelect={(value) => setHouseDimension('lengthMetres', Number(value))}
           />
           <SelectQuestion
             label="Measured house width"
             values={dimensionValues}
             selected={String(draft.house.widthMetres) as (typeof dimensionValues)[number]}
             labels={dimensionLabels}
-            onSelect={(value) =>
-              setDraft((s) => ({ ...s, house: { ...s.house, widthMetres: Number(value) } }))
-            }
+            onSelect={(value) => setHouseDimension('widthMetres', Number(value))}
           />
+          {draft.house.lengthMetres > 0 && draft.house.widthMetres > 0 && (
+            <Card style={{ gap: 5, padding: 16 }}>
+              <Label weight="bold">
+                {layoutPreview.count}-section coverage plan · {layoutPreview.columns}×
+                {layoutPreview.rows}
+              </Label>
+              <Label style={{ color: colors.muted }}>
+                The house is divided into zones no larger than 30 m × 30 m. The plan requires at
+                least one sensor node per zone and supports extra nodes for known hot or wet spots.
+              </Label>
+            </Card>
+          )}
           <SelectQuestion
             label="Flock type for environmental targets"
             values={['broiler', 'layer', 'breeder', 'other', 'unknown']}
@@ -676,10 +736,10 @@ export function HouseSetupForm({ onDone }: { onDone: () => void; startOnSave?: b
       {step === 3 && (
         <>
           <SelectQuestion
-            label="Planned node count"
-            values={countValues}
-            selected={String(draft.sensors.plannedNodes || 1) as (typeof countValues)[number]}
-            labels={countLabels}
+            label="Planned node count (coverage minimum enforced)"
+            values={nodeCountValues}
+            selected={String(selectedNodeCount)}
+            labels={nodeCountLabels}
             onSelect={(value) =>
               setDraft((s) => ({ ...s, sensors: { ...s.sensors, plannedNodes: Number(value) } }))
             }
@@ -700,13 +760,18 @@ export function HouseSetupForm({ onDone }: { onDone: () => void; startOnSave?: b
           />
           <SelectQuestion
             label="Node placement pattern"
-            values={['three_zones', 'two_zones', 'single_center', 'custom_after_test']}
-            selected={draft.sensors.placementNotes || 'three_zones'}
+            values={['coverage_grid', 'extra_hotspots', 'custom_after_test']}
+            selected={
+              ['coverage_grid', 'extra_hotspots', 'custom_after_test'].includes(
+                draft.sensors.placementNotes,
+              )
+                ? draft.sensors.placementNotes
+                : 'coverage_grid'
+            }
             labels={{
-              three_zones: 'Inlet, center, and exhaust zones',
-              two_zones: 'Two opposite house zones',
-              single_center: 'Single center zone',
-              custom_after_test: 'Set after LoRa coverage test',
+              coverage_grid: 'One node in every generated section',
+              extra_hotspots: 'Coverage grid plus known problem spots',
+              custom_after_test: 'Coverage grid plus LoRa-test adjustments',
             }}
             onSelect={(placementNotes) =>
               setDraft((s) => ({ ...s, sensors: { ...s.sensors, placementNotes } }))

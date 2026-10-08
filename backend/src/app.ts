@@ -1,6 +1,7 @@
 import Fastify, { type FastifyRequest } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { ServerOptions } from "node:https";
 import { z } from "zod";
 import { hashPassword, verifyPassword, temporaryPassword } from "./passwords";
@@ -13,7 +14,8 @@ import {
   type LocalFarmState,
 } from "./shared/services/localFarmRepository";
 import { surveyRecommendation } from "./shared/domain/setup";
-import type { Role } from "./shared/domain/types";
+import type { Role, Section } from "./shared/domain/types";
+import { houseGrid, positionInSection } from "./shared/domain/houseLayout";
 import type { FarmResponse, Identity, Session } from "./apiTypes";
 import { createFarm, type BatchStatement, type CoopDatabase } from "./database";
 import {
@@ -24,6 +26,15 @@ import {
   telemetryHistory,
   validTelemetrySecret,
 } from "./telemetry";
+import {
+  claimHub,
+  hubBootstrap,
+  parseHubPairingQr,
+  replacementRequests,
+  reviewReplacement,
+  type HubPrivateConfig,
+} from "./hubPairing";
+import { registerDeveloperConsole } from "./developerConsole";
 
 type User = {
   id: string;
@@ -83,9 +94,18 @@ export async function createApp(
     trustProxy?: boolean;
     deploymentMode?: "cloud" | "hub" | "standalone";
     hubId?: string;
+    databasePath?: string;
+    hubConfigPath?: string;
+    developerConsole?: boolean;
+    localApiUrl?: string;
   } = {},
 ) {
   const now = options.clock ?? Date.now;
+  const connectionForRequest = (request: FastifyRequest) =>
+    options.deploymentMode === "hub" &&
+    typeof request.headers["cf-connecting-ip"] !== "string"
+      ? "local"
+      : requestConnection(request);
   const app = Fastify({
     logger: false,
     bodyLimit: 4_200_000,
@@ -95,6 +115,62 @@ export async function createApp(
   });
   await app.register(rateLimit, { max: 180, timeWindow: "1 minute" });
   const dummyHash = await hashPassword(temporaryPassword());
+  const currentHubId = () => {
+    if (options.hubConfigPath && existsSync(options.hubConfigPath)) {
+      try {
+        const value = JSON.parse(
+          readFileSync(options.hubConfigPath, "utf8"),
+        ) as { hubId?: unknown };
+        if (typeof value.hubId === "string" && value.hubId) return value.hubId;
+      } catch {}
+    }
+    return options.hubId;
+  };
+  const saveHubAssignment = (assignment: {
+    hubId: string;
+    farmCode: string;
+    nodes: { id: string; number: string; section: string }[];
+  }) => {
+    const path = options.hubConfigPath;
+    if (!path || !existsSync(path)) return;
+    try {
+      const config = JSON.parse(readFileSync(path, "utf8")) as HubPrivateConfig;
+      if (config.hubId !== assignment.hubId) return;
+      const temporary = `${path}.tmp`;
+      writeFileSync(
+        temporary,
+        `${JSON.stringify({ ...config, farmCode: assignment.farmCode, nodes: assignment.nodes }, null, 2)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      renameSync(temporary, path);
+    } catch (error) {
+      console.error("Could not update the private hub config:", error);
+    }
+  };
+  const saveCurrentHubAssignment = async (farmId: string) => {
+    const hub = await db
+      .prepare(
+        `SELECT h.id hubId,c.code farmCode FROM telemetry_hubs h
+         JOIN farm_codes c ON c.farm_id=h.farm_id
+         WHERE h.farm_id=? AND h.active=1`,
+      )
+      .get(farmId);
+    if (!hub) return;
+    const nodes = await db
+      .prepare(
+        "SELECT id,number,section FROM telemetry_nodes WHERE farm_id=? AND hub_id=? AND active=1 ORDER BY created_at,id",
+      )
+      .all(farmId, hub.hubId as string);
+    saveHubAssignment({
+      hubId: String(hub.hubId),
+      farmCode: String(hub.farmCode),
+      nodes: nodes.map((node) => ({
+        id: String(node.id),
+        number: String(node.number),
+        section: String(node.section),
+      })),
+    });
+  };
   let queue: Promise<unknown> = Promise.resolve();
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const result = queue.then(work);
@@ -222,18 +298,25 @@ export async function createApp(
     let state = await repo.load();
     const telemetry = await latestTelemetry(db, farmId);
     const hasTelemetry = telemetry.some((node) => node.readings !== null);
+    const readingSource = telemetry.some(
+      (node) => node.readings !== null && node.source === "hardware",
+    )
+      ? "hardware"
+      : hasTelemetry
+        ? "simulated"
+        : "sample";
     state = await applyTelemetryToState(db, farmId, state, now(), telemetry);
     // Cache reads do not refresh sensor timestamps or replay commands.
     state.context = {
       ...state.context,
       role: user.role,
-      connection: requestConnection(request),
+      connection: connectionForRequest(request),
     };
     state.started = true;
     return {
       state,
       revision: farm.revision,
-      readings: hasTelemetry ? "telemetry" : "sample",
+      readings: readingSource,
     };
   }
   const workers = async (farmId: string) =>
@@ -283,16 +366,82 @@ export async function createApp(
       .header("Cache-Control", "no-store")
       .header("X-Content-Type-Options", "nosniff");
   });
-  app.get("/health", async () => ({
-    service: "CoopGuard",
-    version: "0.7.0",
-    readings: "live-or-sample",
-    mode: options.deploymentMode ?? "standalone",
-    ...(options.deploymentMode === "hub" && options.hubId
-      ? { hubId: options.hubId }
-      : {}),
-    ...(db.syncState ? { sync: await db.syncState() } : {}),
-  }));
+  app.get("/health", async () => {
+    const hubId = currentHubId();
+    return {
+      service: "CoopGuard",
+      version: "0.7.0",
+      readings: "live-or-sample",
+      mode: options.deploymentMode ?? "standalone",
+      ...(options.deploymentMode === "hub" && hubId ? { hubId } : {}),
+      ...(db.syncState ? { sync: await db.syncState() } : {}),
+    };
+  });
+  app.post("/v1/hubs/claim", (request) =>
+    serial(async () => {
+      const user = await account(request);
+      if (user.role !== "technician")
+        fail(403, "Only a CoopGuard technician can register a farm hub.");
+      const body = parse(
+        z
+          .object({
+            qr: z.string().min(20).max(4096),
+            farmId: z.uuid(),
+            transport: z.enum(["wifi", "usb"]),
+          })
+          .strict(),
+        request.body,
+      );
+      const qr = parseHubPairingQr(body.qr);
+      const result = await claimHub(db, body.qr, body.farmId, user.id, now());
+      if (result.status === "claimed") saveHubAssignment(result);
+      await audit(user, body.farmId, `hub_${result.status}`, result.hubId);
+      return {
+        ...result,
+        server: body.transport === "wifi" ? qr.wifiUrl : qr.usbUrl,
+        message:
+          result.status === "claimed"
+            ? "Hub registered to this farm."
+            : "This farm already has an active hub. An administrator must approve the replacement.",
+      };
+    }),
+  );
+  app.get("/v1/hubs/bootstrap", async (request) => {
+    const hubIdHeader = request.headers["x-coopguard-hub-id"],
+      secretHeader = request.headers["x-coopguard-hub-token"];
+    const hubId = Array.isArray(hubIdHeader) ? hubIdHeader[0] : hubIdHeader;
+    const secret = Array.isArray(secretHeader) ? secretHeader[0] : secretHeader;
+    if (!hubId || !secret) fail(401, "Valid hub credentials are required.");
+    return hubBootstrap(db, hubId, secret);
+  });
+  app.get("/v1/admin/hub-replacements", async (request) => {
+    const user = await account(request);
+    if (user.role !== "admin")
+      fail(403, "Only a team admin can review hub replacements.");
+    return { requests: await replacementRequests(db) };
+  });
+  app.post("/v1/admin/hub-replacements/:id/review", (request) =>
+    serial(async () => {
+      const user = await account(request);
+      if (user.role !== "admin")
+        fail(403, "Only a team admin can review hub replacements.");
+      const id = parse(z.uuid(), (request.params as { id?: string }).id);
+      const body = parse(
+        z.object({ decision: z.enum(["approve", "reject"]) }).strict(),
+        request.body,
+      );
+      const result = await reviewReplacement(
+        db,
+        id,
+        user.id,
+        body.decision,
+        now(),
+      );
+      if (result.status === "approved") saveHubAssignment(result);
+      await audit(user, null, `hub_replacement_${result.status}`, id);
+      return result;
+    }),
+  );
   app.post(
     "/v1/telemetry/ingest",
     { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
@@ -301,7 +450,9 @@ export async function createApp(
         const hubIdHeader = request.headers["x-coopguard-hub-id"],
           secretHeader = request.headers["x-coopguard-hub-token"];
         const hubId = Array.isArray(hubIdHeader) ? hubIdHeader[0] : hubIdHeader;
-        const secret = Array.isArray(secretHeader) ? secretHeader[0] : secretHeader;
+        const secret = Array.isArray(secretHeader)
+          ? secretHeader[0]
+          : secretHeader;
         if (!hubId || !secret || secret.length < 32 || secret.length > 256)
           fail(401, "Valid hub credentials are required.");
         const hub = (await db
@@ -317,7 +468,10 @@ export async function createApp(
           fail(401, "Valid hub credentials are required.");
         const body = parse(telemetryBatchSchema, request.body);
         if (body.hubId !== hub.id || body.farmCode !== hub.code)
-          fail(403, "This telemetry packet is bound to a different hub or farm.");
+          fail(
+            403,
+            "This telemetry packet is bound to a different hub or farm.",
+          );
         const receivedAt = now();
         if (Date.parse(body.sentAt) > receivedAt + 5 * 60_000)
           fail(400, "The gateway time is too far in the future.");
@@ -326,7 +480,9 @@ export async function createApp(
             "SELECT id,section FROM telemetry_nodes WHERE hub_id=? AND farm_id=? AND active=1",
           )
           .all(hub.id, hub.farm_id)) as { id: string; section: string }[];
-        const nodes = new Map(registered.map((node) => [node.id, node.section]));
+        const nodes = new Map(
+          registered.map((node) => [node.id, node.section]),
+        );
         const messagePlaceholders = body.readings.map(() => "?").join(",");
         const sequencePredicates = body.readings
           .map(() => "(node_id=? AND sequence=?)")
@@ -339,7 +495,10 @@ export async function createApp(
           .all(
             hub.id,
             ...body.readings.map((reading) => reading.messageId),
-            ...body.readings.flatMap((reading) => [reading.nodeId, reading.sequence]),
+            ...body.readings.flatMap((reading) => [
+              reading.nodeId,
+              reading.sequence,
+            ]),
           )) as { message_id: string; sequence: number; node_id: string }[];
         const existingMessages = new Map(
           existingRows.map((reading) => [reading.message_id, reading]),
@@ -369,23 +528,38 @@ export async function createApp(
           const messageIdentity = batchMessages.get(reading.messageId);
           const sequenceMessage = batchSequences.get(sequenceKey);
           if (messageIdentity !== undefined || sequenceMessage !== undefined) {
-            if (messageIdentity === identity && sequenceMessage === reading.messageId)
+            if (
+              messageIdentity === identity &&
+              sequenceMessage === reading.messageId
+            )
               duplicates += 1;
             else
-              rejected.push({ messageId: reading.messageId, reason: "identity_conflict" });
+              rejected.push({
+                messageId: reading.messageId,
+                reason: "identity_conflict",
+              });
             continue;
           }
           if (!nodes.has(reading.nodeId)) {
-            rejected.push({ messageId: reading.messageId, reason: "node_not_registered" });
+            rejected.push({
+              messageId: reading.messageId,
+              reason: "node_not_registered",
+            });
             continue;
           }
           if (nodes.get(reading.nodeId) !== reading.section) {
-            rejected.push({ messageId: reading.messageId, reason: "section_mismatch" });
+            rejected.push({
+              messageId: reading.messageId,
+              reason: "section_mismatch",
+            });
             continue;
           }
           const sampledAt = Date.parse(reading.sampledAt);
           if (sampledAt > receivedAt + 5 * 60_000) {
-            rejected.push({ messageId: reading.messageId, reason: "sample_time_in_future" });
+            rejected.push({
+              messageId: reading.messageId,
+              reason: "sample_time_in_future",
+            });
             continue;
           }
           const existingMessage = existingMessages.get(reading.messageId);
@@ -399,12 +573,18 @@ export async function createApp(
             )
               duplicates += 1;
             else
-              rejected.push({ messageId: reading.messageId, reason: "identity_conflict" });
+              rejected.push({
+                messageId: reading.messageId,
+                reason: "identity_conflict",
+              });
             continue;
           }
           const maximum = maxSequences.get(reading.nodeId) ?? -1;
           if (reading.sequence <= maximum) {
-            rejected.push({ messageId: reading.messageId, reason: "sequence_replayed" });
+            rejected.push({
+              messageId: reading.messageId,
+              reason: "sequence_replayed",
+            });
             continue;
           }
           maxSequences.set(reading.nodeId, reading.sequence);
@@ -415,7 +595,13 @@ export async function createApp(
         if (accepted.length)
           await db.batch([
             ...accepted.map((reading) =>
-              readingInsert(hub.farm_id, hub.id, reading, receivedAt),
+              readingInsert(
+                hub.farm_id,
+                hub.id,
+                reading,
+                receivedAt,
+                body.source,
+              ),
             ),
             {
               sql: "UPDATE telemetry_hubs SET last_seen_at=? WHERE id=?",
@@ -463,7 +649,8 @@ export async function createApp(
       const fresh =
         user &&
         ((await db.prepare("SELECT * FROM users WHERE id=?").get(user.id)) as
-          User | undefined);
+          | User
+          | undefined);
       if (
         !valid ||
         !fresh?.active ||
@@ -579,6 +766,143 @@ export async function createApp(
       },
     };
   });
+  app.get("/v1/admin/farms", async (request) => {
+    const user = await account(request, false);
+    if (user.role !== "admin")
+      fail(403, "Only a team admin can view all farms.");
+    const farms = await db
+      .prepare(
+        `SELECT f.id,f.name,f.customer_name customerName,f.contact_name contactName,
+                f.contact_phone contactPhone,f.address,c.code,
+                h.id hubId,h.source hubSource,h.last_seen_at hubLastSeenAt,
+                (SELECT COUNT(*) FROM telemetry_nodes n WHERE n.farm_id=f.id AND n.active=1) nodeCount
+         FROM farms f JOIN farm_codes c ON c.farm_id=f.id
+         LEFT JOIN telemetry_hubs h ON h.farm_id=f.id AND h.active=1
+         ORDER BY f.created_at DESC,f.name`,
+      )
+      .all();
+    return {
+      farms: await Promise.all(
+        farms.map(async (farm) => {
+          const nodes = await latestTelemetry(db, String(farm.id));
+          return {
+            ...farm,
+            nodeCount: Number(farm.nodeCount ?? 0),
+            latest:
+              nodes
+                .filter((node) => node.readings !== null)
+                .sort((a, b) => (b.sampledAt ?? 0) - (a.sampledAt ?? 0))[0] ??
+              null,
+          };
+        }),
+      ),
+    };
+  });
+  app.get("/v1/farms/:farmId/devices", async (request) => {
+    const { farmId } = await access(request);
+    const hub = await db
+      .prepare(
+        `SELECT id,farm_id farmId,source,created_at createdAt,last_seen_at lastSeenAt
+         FROM telemetry_hubs WHERE farm_id=? AND active=1`,
+      )
+      .get(farmId);
+    return { hub: hub ?? null, nodes: await latestTelemetry(db, farmId) };
+  });
+  app.post("/v1/farms/:farmId/nodes", (request) =>
+    serial(async () => {
+      const { user, farmId } = await access(request, ["technician"]);
+      const body = parse(
+        z
+          .object({
+            nodeId: z
+              .string()
+              .trim()
+              .min(3)
+              .max(64)
+              .regex(/^[A-Za-z0-9_-]+$/)
+              .optional(),
+            section: z.string().regex(/^[A-Z]{1,4}$/),
+          })
+          .strict(),
+        request.body,
+      );
+      const hub = await db
+        .prepare("SELECT id FROM telemetry_hubs WHERE farm_id=? AND active=1")
+        .get(farmId);
+      if (!hub)
+        fail(409, "Pair a hub to this farm before adding sensor nodes.");
+      const farm = await row(farmId);
+      const state = JSON.parse(farm.state) as LocalFarmState;
+      const house = state.site.survey?.house ?? state.house;
+      const layout = houseGrid(
+        house?.lengthMetres ?? 90,
+        house?.widthMetres ?? 12,
+      );
+      if (!layout.sections.includes(body.section as Section))
+        fail(400, "Choose a section from this farm's approved house map.");
+      const existingNodes = await db
+        .prepare(
+          "SELECT id,section FROM telemetry_nodes WHERE farm_id=? AND hub_id=? AND active=1 ORDER BY created_at,id",
+        )
+        .all(farmId, hub.id as string);
+      const number = String(existingNodes.length + 1).padStart(2, "0");
+      const nodeId = body.nodeId ?? `${String(hub.id)}-N${number}`;
+      if (
+        await db.prepare("SELECT 1 FROM telemetry_nodes WHERE id=?").get(nodeId)
+      )
+        fail(409, "This sensor node is already registered.");
+      const peers = existingNodes.filter(
+        (node) => String(node.section) === body.section,
+      );
+      const placement = positionInSection(
+        body.section as Section,
+        layout,
+        peers.length,
+        peers.length + 1,
+      );
+      await db.batch([
+        {
+          sql: "INSERT INTO telemetry_nodes(id,farm_id,hub_id,number,section,x,y,control,source,active,created_at) VALUES(?,?,?,?,?,?,?,0,'simulated',1,?)",
+          args: [
+            nodeId,
+            farmId,
+            hub.id as string,
+            number,
+            body.section,
+            placement.x,
+            placement.y,
+            now(),
+          ],
+        },
+        auditStatement(user, farmId, "telemetry_node_registered", nodeId),
+      ]);
+      await saveCurrentHubAssignment(farmId);
+      return {
+        hub: hub.id,
+        nodeId,
+        section: body.section,
+        source: "simulated",
+      };
+    }),
+  );
+  app.delete("/v1/farms/:farmId/nodes/:nodeId", (request) =>
+    serial(async () => {
+      const { user, farmId } = await access(request, ["technician"]);
+      const nodeId = parse(
+        z.string().trim().min(3).max(64),
+        (request.params as { nodeId?: string }).nodeId,
+      );
+      const result = await db
+        .prepare(
+          "UPDATE telemetry_nodes SET active=0 WHERE id=? AND farm_id=? AND active=1",
+        )
+        .run(nodeId, farmId);
+      if (!result.changes) fail(404, "Sensor node not found in this farm.");
+      await audit(user, farmId, "telemetry_node_deactivated", nodeId);
+      await saveCurrentHubAssignment(farmId);
+      return { ok: true };
+    }),
+  );
   app.get("/v1/farms/:farmId", (request) =>
     serial(async () => {
       const { user, farmId } = await access(request);
@@ -600,15 +924,28 @@ export async function createApp(
       z
         .object({
           nodeId: z.string().trim().min(3).max(64),
-          metric: z.enum(["temperature", "humidity", "ammonia", "co2", "moisture"]),
+          metric: z.enum([
+            "temperature",
+            "humidity",
+            "ammonia",
+            "co2",
+            "moisture",
+          ]),
           from: z.coerce.number().int().nonnegative(),
           to: z.coerce.number().int().positive(),
           limit: z.coerce.number().int().min(1).max(1000).default(500),
+          bucketMs: z.coerce
+            .number()
+            .int()
+            .min(60_000)
+            .max(7 * 86_400_000)
+            .optional(),
         })
         .strict(),
       request.query,
     );
-    if (query.from > query.to) fail(400, "The history start must be before its end.");
+    if (query.from > query.to)
+      fail(400, "The history start must be before its end.");
     return {
       nodeId: query.nodeId,
       metric: query.metric,
@@ -620,6 +957,7 @@ export async function createApp(
         query.from,
         query.to,
         query.limit,
+        query.bucketMs,
       ),
     };
   });
@@ -716,7 +1054,7 @@ export async function createApp(
       await repo.load();
       await repo.dispatch({
         type: "context",
-        patch: { role: user.role, connection: requestConnection(request) },
+        patch: { role: user.role, connection: connectionForRequest(request) },
       });
       let state: LocalFarmState;
       try {
@@ -752,7 +1090,7 @@ export async function createApp(
   app.post("/v1/farms/:farmId/import", (request) =>
     serial(async () => {
       const { user, farmId } = await access(request, ["technician"]);
-      if (requestConnection(request) !== "local")
+      if (connectionForRequest(request) !== "local")
         fail(
           403,
           "Import previous phone records while connected on the farm WiFi.",
@@ -872,5 +1210,13 @@ export async function createApp(
       return { ok: true };
     },
   );
+  if (options.databasePath && options.hubConfigPath)
+    registerDeveloperConsole(app, db, {
+      enabled: options.developerConsole ?? options.deploymentMode !== "cloud",
+      mode: options.deploymentMode ?? "standalone",
+      databasePath: options.databasePath,
+      hubConfigPath: options.hubConfigPath,
+      apiUrl: options.localApiUrl ?? "https://localhost:8443",
+    });
   return app;
 }

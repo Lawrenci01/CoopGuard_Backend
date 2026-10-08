@@ -266,6 +266,25 @@ describe('authenticated native mobile flows', () => {
     expect(api.me).toHaveBeenCalledWith(expect.any(String), 't'.repeat(43));
   });
 
+  test('farm QR unlocks a read-only owner preview only for that scanned farm', async () => {
+    await prepareActivatedFarm();
+    await render(<App />);
+    await signIn('technician');
+    await screen.findByText('Open a farm setup');
+    await fireEvent.press(screen.getByTestId('scan-technician-farm'));
+    await fireEvent(screen.getByTestId('technician-farm-qr-camera'), 'onBarcodeScanned', {
+      data: 'coopguard://farm/open?version=1&farm=CG-PH-TEST01',
+    });
+
+    await screen.findByTestId('technician-setup-workspace');
+    await fireEvent.press(screen.getByTestId('preview-owner-interface'));
+    expect(await screen.findByTestId('owner-preview-banner')).toBeTruthy();
+    expect(screen.getByTestId('nav-Dashboard')).toBeTruthy();
+    expect(screen.getByText(/Scanned farm CG-PH-TEST01/)).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('exit-owner-preview'));
+    expect(await screen.findByTestId('technician-setup-workspace')).toBeTruthy();
+  });
+
   test('failed login stays private; first sign-in requires a new password', async () => {
     await prepareActivatedFarm();
     await render(<App />);
@@ -343,8 +362,9 @@ describe('authenticated native mobile flows', () => {
     expect(screen.queryByText('Section B is getting warm')).toBeNull();
     expect(screen.queryByText('House readings')).toBeNull();
     expect(screen.queryByTestId('map-sensor-01')).toBeNull();
+    expect(screen.queryByTestId('preview-owner-interface')).toBeNull();
     expect(screen.getByText('Start site survey')).toBeTruthy();
-    await fireEvent.press(screen.getByText('Account'));
+    await fireEvent.press(screen.getByLabelText('Account'));
     await fireEvent.press(screen.getByTestId('sign-out'));
     await screen.findByLabelText('Username');
     expect(screen.queryByTestId('nav-Devices')).toBeNull();
@@ -354,7 +374,7 @@ describe('authenticated native mobile flows', () => {
     await render(<App />);
     await signIn('technician');
     await openTechnicianFarm();
-    await fireEvent.press(screen.getByText('Account'));
+    await fireEvent.press(screen.getByLabelText('Account'));
     await fireEvent.press(screen.getByTestId('hub-setup'));
     await fireEvent.changeText(
       screen.getByLabelText('Farm hub HTTPS address'),

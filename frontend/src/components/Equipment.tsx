@@ -6,7 +6,7 @@ import { canRequestControl } from '../domain/policy';
 import { equipmentKinds } from '../domain/siteWorkflow';
 import { en } from '../i18n/en';
 import { colors } from '../theme';
-import { Button, Card, Label, Sheet, styles } from './ui';
+import { Button, Card, Chip, Label, Sheet, styles } from './ui';
 import { ControlSheet, RequestStatus } from './FarmSheets';
 
 export function Equipment() {
@@ -42,16 +42,30 @@ export function Equipment() {
         accessibilityLabel={`Equipment, ${stage}`}
         onPress={() => setOpen(true)}
       >
-        <Card style={{ padding: 16 }}>
+        <Card style={{ padding: 17 }}>
           <View style={styles.row}>
-            <Fan color={colors.green} size={23} />
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                backgroundColor: colors.blueSoft,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Fan color={colors.blue} size={21} strokeWidth={1.8} />
+            </View>
             <View style={{ flex: 1, gap: 3 }}>
-              <Label weight="bold">Equipment</Label>
-              <Label style={{ fontSize: 12, color: colors.muted }}>
+              <Label weight="bold" style={{ fontSize: 15 }}>
+                Equipment
+              </Label>
+              <Label style={{ fontSize: 9, color: colors.muted }}>
                 {stage}
                 {context.connection !== 'local' ? ' · last reported' : ' · sample'}
               </Label>
             </View>
+            <Chip tone="blue">Simulated</Chip>
             <ChevronRight color={colors.muted} size={20} />
           </View>
         </Card>

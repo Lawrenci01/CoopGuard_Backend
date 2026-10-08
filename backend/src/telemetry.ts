@@ -1,4 +1,9 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
 import { z } from "zod";
 import type { CoopDatabase, SqlRow } from "./database";
 import type {
@@ -9,21 +14,31 @@ import type {
   Sensor,
 } from "./shared/domain/types";
 import type { LocalFarmState } from "./shared/services/localFarmRepository";
+import { houseGrid, positionInSection } from "./shared/domain/houseLayout";
 
 const deviceId = z
   .string()
   .trim()
   .min(3)
   .max(64)
-  .regex(/^[A-Za-z0-9_-]+$/, "Use only letters, numbers, underscores and hyphens.");
+  .regex(
+    /^[A-Za-z0-9_-]+$/,
+    "Use only letters, numbers, underscores and hyphens.",
+  );
 const finite = (minimum: number, maximum: number) =>
   z.number().finite().min(minimum).max(maximum);
+
+export type TelemetrySource = "simulated" | "hardware";
 
 export const telemetryBatchSchema = z
   .object({
     schemaVersion: z.literal(1),
-    farmCode: z.string().trim().regex(/^CG-[A-Z0-9-]{4,32}$/),
+    farmCode: z
+      .string()
+      .trim()
+      .regex(/^CG-[A-Z0-9-]{4,32}$/),
     hubId: deviceId,
+    source: z.enum(["simulated", "hardware"]).default("hardware"),
     sentAt: z.iso.datetime({ offset: true }),
     readings: z
       .array(
@@ -31,8 +46,12 @@ export const telemetryBatchSchema = z
           .object({
             messageId: z.uuid(),
             nodeId: deviceId,
-            sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-            section: z.enum(["A", "B", "C"]),
+            sequence: z
+              .number()
+              .int()
+              .nonnegative()
+              .max(Number.MAX_SAFE_INTEGER),
+            section: z.string().regex(/^[A-Z]{1,4}$/),
             sampledAt: z.iso.datetime({ offset: true }),
             firmwareVersion: z.string().trim().min(1).max(40).optional(),
             configVersion: z.string().trim().min(1).max(40).optional(),
@@ -105,12 +124,21 @@ export async function provisionTelemetryGateway(
     .get(farmCode)) as { id: string; state: string } | undefined;
   if (!farm) throw new Error("Farm ID not found.");
   const state = JSON.parse(farm.state) as LocalFarmState;
+  const house = state.site.survey?.house ?? state.house;
+  const layout = houseGrid(house?.lengthMetres ?? 90, house?.widthMetres ?? 12);
   const virtualHub = state.deviceSimulation?.hub;
   const virtualNodes = state.deviceSimulation?.nodes ?? [];
   if (!virtualHub || virtualHub.status !== "reporting")
-    throw new Error("Pair the virtual farm hub and confirm its heartbeat first.");
-  if (!virtualNodes.length || virtualNodes.some((node) => node.status !== "reporting"))
-    throw new Error("Pair every planned virtual node and confirm its heartbeat first.");
+    throw new Error(
+      "Pair the virtual farm hub and confirm its heartbeat first.",
+    );
+  if (
+    !virtualNodes.length ||
+    virtualNodes.some((node) => node.status !== "reporting")
+  )
+    throw new Error(
+      "Pair every planned virtual node and confirm its heartbeat first.",
+    );
   const existing = await db
     .prepare("SELECT 1 FROM telemetry_hubs WHERE id=? OR farm_id=?")
     .get(virtualHub.id, farm.id);
@@ -121,23 +149,34 @@ export async function provisionTelemetryGateway(
   const secret = randomBytes(32).toString("base64url");
   const statements = [
     {
-      sql: "INSERT INTO telemetry_hubs(id,farm_id,secret_digest,active,created_at,last_seen_at) VALUES(?,?,?,1,?,NULL)",
+      sql: "INSERT INTO telemetry_hubs(id,farm_id,secret_digest,active,source,created_at,last_seen_at) VALUES(?,?,?,1,'simulated',?,NULL)",
       args: [virtualHub.id, farm.id, telemetrySecretDigest(secret), now],
     },
-    ...virtualNodes.map((node, index) => ({
-      sql: "INSERT INTO telemetry_nodes(id,farm_id,hub_id,number,section,x,y,control,active,created_at) VALUES(?,?,?,?,?,?,?,?,1,?)",
-      args: [
-        node.id,
-        farm.id,
-        virtualHub.id,
-        String(index + 1).padStart(2, "0"),
+    ...virtualNodes.map((node, index) => {
+      const peers = virtualNodes.filter(
+        (item) => item.section === node.section,
+      );
+      const placement = positionInSection(
         node.section,
-        node.x ?? ((["A", "B", "C"] as Section[]).indexOf(node.section) + 0.5) / 3,
-        node.y ?? 0.5,
-        0,
-        now,
-      ],
-    })),
+        layout,
+        peers.findIndex((item) => item.id === node.id),
+        peers.length,
+      );
+      return {
+        sql: "INSERT INTO telemetry_nodes(id,farm_id,hub_id,number,section,x,y,control,source,active,created_at) VALUES(?,?,?,?,?,?,?,?,'simulated',1,?)",
+        args: [
+          node.id,
+          farm.id,
+          virtualHub.id,
+          String(index + 1).padStart(2, "0"),
+          node.section,
+          node.x ?? placement.x,
+          node.y ?? placement.y,
+          0,
+          now,
+        ],
+      };
+    }),
   ];
   await db.batch(statements);
   return {
@@ -160,6 +199,7 @@ export interface TelemetryNodeLatest {
   x: number;
   y: number;
   control: boolean;
+  source: TelemetrySource;
   sampledAt: number | null;
   receivedAt: number | null;
   sequence: number | null;
@@ -185,6 +225,7 @@ export async function latestTelemetry(
     .prepare(
       `SELECT n.id node_id,n.number,n.section,n.x,n.y,n.control,
         r.sequence,r.sampled_at,r.received_at,r.firmware_version,r.config_version,
+        COALESCE(r.source,n.source) source,
         r.calibrated,r.warming_up,r.sensors_valid,r.battery_percent,r.rssi_dbm,r.snr_db,
         r.temperature_c,r.humidity_percent,r.ammonia_ppm,r.co2_ppm,r.litter_moisture_percent
        FROM telemetry_nodes n
@@ -207,11 +248,14 @@ function telemetryNodeFromRow(row: SqlRow): TelemetryNodeLatest {
     x: Number(row.x),
     y: Number(row.y),
     control: !!row.control,
+    source: String(row.source) === "simulated" ? "simulated" : "hardware",
     sampledAt: nullableNumber(row.sampled_at),
     receivedAt: nullableNumber(row.received_at),
     sequence: nullableNumber(row.sequence),
-    firmwareVersion: row.firmware_version == null ? null : String(row.firmware_version),
-    configVersion: row.config_version == null ? null : String(row.config_version),
+    firmwareVersion:
+      row.firmware_version == null ? null : String(row.firmware_version),
+    configVersion:
+      row.config_version == null ? null : String(row.config_version),
     calibrated: row.calibrated == null ? null : !!row.calibrated,
     warmingUp: row.warming_up == null ? null : !!row.warming_up,
     sensorsValid: row.sensors_valid == null ? null : !!row.sensors_valid,
@@ -238,11 +282,18 @@ const conditionMap = (condition: Condition): Record<MetricKey, Condition> => ({
   moisture: condition,
 });
 
-function telemetrySensor(node: TelemetryNodeLatest, currentTime: number): Sensor | null {
-  if (!node.readings || node.sampledAt === null || node.receivedAt === null) return null;
+function telemetrySensor(
+  node: TelemetryNodeLatest,
+  currentTime: number,
+): Sensor | null {
+  if (!node.readings || node.sampledAt === null || node.receivedAt === null)
+    return null;
   const online = currentTime - node.receivedAt <= 180_000;
   const readingsUsable =
-    online && node.calibrated === true && node.warmingUp === false && node.sensorsValid === true;
+    online &&
+    node.calibrated === true &&
+    node.warmingUp === false &&
+    node.sensorsValid === true;
   return {
     id: node.nodeId,
     number: node.number,
@@ -279,9 +330,13 @@ function technicalAlerts(
     const stale = currentTime - node.receivedAt > 180_000;
     const qualityProblem =
       !stale &&
-      (node.calibrated !== true || node.warmingUp === true || node.sensorsValid !== true);
+      (node.calibrated !== true ||
+        node.warmingUp === true ||
+        node.sensorsValid !== true);
     if (!stale && !qualityProblem) return [];
-    const id = stale ? `telemetry-stale-${node.nodeId}` : `telemetry-quality-${node.nodeId}`;
+    const id = stale
+      ? `telemetry-stale-${node.nodeId}`
+      : `telemetry-quality-${node.nodeId}`;
     const previous = priorAlert(state, id);
     return [
       {
@@ -338,6 +393,7 @@ export interface TelemetryHistoryPoint {
   receivedAt: number;
   sequence: number;
   value: number;
+  source: TelemetrySource;
 }
 
 const metricColumn: Record<MetricKey, string> = {
@@ -356,11 +412,35 @@ export async function telemetryHistory(
   from: number,
   to: number,
   limit: number,
+  bucketMs?: number,
 ): Promise<TelemetryHistoryPoint[]> {
   const column = metricColumn[metric];
+  if (bucketMs) {
+    const rows = await db
+      .prepare(
+        `SELECT MIN(id) id,node_id,
+          CAST(sampled_at / ? AS INTEGER) * ? sampled_at,
+          MAX(received_at) received_at,MAX(sequence) sequence,AVG(${column}) value,
+          CASE WHEN SUM(CASE WHEN source='hardware' THEN 1 ELSE 0 END)>0 THEN 'hardware' ELSE 'simulated' END source
+         FROM sensor_readings
+         WHERE farm_id=? AND node_id=? AND sampled_at BETWEEN ? AND ?
+         GROUP BY CAST(sampled_at / ? AS INTEGER)
+         ORDER BY sampled_at DESC LIMIT ?`,
+      )
+      .all(bucketMs, bucketMs, farmId, nodeId, from, to, bucketMs, limit);
+    return rows.map((row) => ({
+      id: String(row.id),
+      nodeId: String(row.node_id),
+      sampledAt: Number(row.sampled_at),
+      receivedAt: Number(row.received_at),
+      sequence: Number(row.sequence),
+      value: Number(row.value),
+      source: String(row.source) === "simulated" ? "simulated" : "hardware",
+    }));
+  }
   const rows = await db
     .prepare(
-      `SELECT id,node_id,sampled_at,received_at,sequence,${column} value
+      `SELECT id,node_id,sampled_at,received_at,sequence,${column} value,source
        FROM sensor_readings
        WHERE farm_id=? AND node_id=? AND sampled_at BETWEEN ? AND ?
        ORDER BY sampled_at DESC LIMIT ?`,
@@ -373,6 +453,7 @@ export async function telemetryHistory(
     receivedAt: Number(row.received_at),
     sequence: Number(row.sequence),
     value: Number(row.value),
+    source: String(row.source) === "simulated" ? "simulated" : "hardware",
   }));
 }
 
@@ -381,13 +462,14 @@ export const readingInsert = (
   hubId: string,
   reading: TelemetryReading,
   receivedAt: number,
+  source: TelemetrySource = "hardware",
 ) => ({
   sql: `INSERT INTO sensor_readings(
     id,message_id,farm_id,hub_id,node_id,sequence,sampled_at,received_at,
     temperature_c,humidity_percent,ammonia_ppm,co2_ppm,litter_moisture_percent,
-    calibrated,warming_up,sensors_valid,battery_percent,rssi_dbm,snr_db,
+    calibrated,warming_up,sensors_valid,battery_percent,rssi_dbm,snr_db,source,
     firmware_version,config_version
-  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   args: [
     randomUUID(),
     reading.messageId,
@@ -408,6 +490,7 @@ export const readingInsert = (
     reading.power.batteryPercent,
     reading.radio.rssiDbm,
     reading.radio.snrDb,
+    source,
     reading.firmwareVersion ?? null,
     reading.configVersion ?? null,
   ],

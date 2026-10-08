@@ -31,7 +31,7 @@ export function formatReading(value: number | null, metric: MetricKey): string {
 
 export function simulatedNodeTrend(
   sensors: Sensor[],
-  metric: Exclude<MetricKey, 'moisture'>,
+  metric: MetricKey,
   sampleSeries: number[],
 ): number[] {
   const reporting = sensors.filter(

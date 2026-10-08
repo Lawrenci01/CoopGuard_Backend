@@ -93,7 +93,10 @@ class TursoDatabase implements CoopDatabase {
   async batch(statements: BatchStatement[]) {
     await this.client.batch(
       statements.map(
-        ({ sql, args = [] }): InStatement => ({ sql, args: args as InArgs }),
+        ({ sql, args = [] }): InStatement => ({
+          sql,
+          args: args as InArgs,
+        }),
       ),
       "write",
     );
@@ -111,7 +114,8 @@ class HubSyncDatabase implements CoopDatabase {
 
   prepare(sql: string): PreparedStatement {
     return {
-      get: async (...args) => (await this.client.get(sql, ...args)) as SqlRow | undefined,
+      get: async (...args) =>
+        (await this.client.get(sql, ...args)) as SqlRow | undefined,
       all: async (...args) => (await this.client.all(sql, ...args)) as SqlRow[],
       run: async (...args) => {
         const result = await this.client.run(sql, ...args);
@@ -191,14 +195,16 @@ const schema = [
   `CREATE TABLE IF NOT EXISTS telemetry_hubs (
     id TEXT PRIMARY KEY, farm_id TEXT NOT NULL REFERENCES farms(id),
     secret_digest TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+    source TEXT NOT NULL DEFAULT 'hardware' CHECK(source IN ('simulated','hardware')),
     created_at INTEGER NOT NULL, last_seen_at INTEGER
   )`,
-  "CREATE UNIQUE INDEX IF NOT EXISTS telemetry_hubs_farm ON telemetry_hubs(farm_id)",
+  "CREATE INDEX IF NOT EXISTS telemetry_hubs_farm_lookup ON telemetry_hubs(farm_id)",
   `CREATE TABLE IF NOT EXISTS telemetry_nodes (
     id TEXT PRIMARY KEY, farm_id TEXT NOT NULL REFERENCES farms(id),
     hub_id TEXT NOT NULL REFERENCES telemetry_hubs(id), number TEXT NOT NULL,
-    section TEXT NOT NULL CHECK(section IN ('A','B','C')),
+    section TEXT NOT NULL,
     x REAL NOT NULL, y REAL NOT NULL, control INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'hardware' CHECK(source IN ('simulated','hardware')),
     active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS telemetry_nodes_farm ON telemetry_nodes(farm_id)",
@@ -214,22 +220,120 @@ const schema = [
     calibrated INTEGER NOT NULL, warming_up INTEGER NOT NULL,
     sensors_valid INTEGER NOT NULL, battery_percent REAL,
     rssi_dbm REAL NOT NULL, snr_db REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'hardware' CHECK(source IN ('simulated','hardware')),
     firmware_version TEXT, config_version TEXT,
     UNIQUE(hub_id,message_id), UNIQUE(node_id,sequence)
   )`,
   "CREATE INDEX IF NOT EXISTS sensor_readings_farm_time ON sensor_readings(farm_id,sampled_at DESC)",
   "CREATE INDEX IF NOT EXISTS sensor_readings_node_time ON sensor_readings(node_id,sampled_at DESC)",
+  `CREATE TABLE IF NOT EXISTS hub_pairings (
+    id TEXT PRIMARY KEY, hub_id TEXT NOT NULL UNIQUE,
+    token_digest TEXT NOT NULL, secret_digest TEXT NOT NULL,
+    wifi_url TEXT NOT NULL, usb_url TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','claimed','replacement_pending','expired','cancelled')),
+    farm_id TEXT REFERENCES farms(id), requested_by TEXT REFERENCES users(id),
+    expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS hub_replacement_requests (
+    id TEXT PRIMARY KEY, pairing_id TEXT NOT NULL UNIQUE REFERENCES hub_pairings(id),
+    farm_id TEXT NOT NULL REFERENCES farms(id), old_hub_id TEXT NOT NULL REFERENCES telemetry_hubs(id),
+    requested_by TEXT NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected')),
+    reviewed_by TEXT REFERENCES users(id), created_at INTEGER NOT NULL, reviewed_at INTEGER
+  )`,
+  "CREATE INDEX IF NOT EXISTS hub_replacements_status ON hub_replacement_requests(status,created_at)",
 ];
 
+async function migrateTelemetryHubIndex(db: CoopDatabase) {
+  await db.prepare("DROP INDEX IF EXISTS telemetry_hubs_farm").run();
+  await db
+    .prepare(
+      "CREATE UNIQUE INDEX IF NOT EXISTS telemetry_hubs_one_active_farm ON telemetry_hubs(farm_id) WHERE active=1",
+    )
+    .run();
+}
+
+async function migrateTelemetryNodeSections(db: CoopDatabase) {
+  const table = (await db
+    .prepare(
+      "SELECT sql FROM sqlite_schema WHERE type='table' AND name='telemetry_nodes'",
+    )
+    .get()) as { sql?: string } | undefined;
+  if (!table?.sql?.includes("section IN ('A','B','C')")) return;
+  await db.prepare("PRAGMA foreign_keys=OFF").run();
+  try {
+    await db.batch([
+      { sql: "DROP TABLE IF EXISTS telemetry_nodes_v2" },
+      {
+        sql: "CREATE TABLE telemetry_nodes_v2 (id TEXT PRIMARY KEY, farm_id TEXT NOT NULL REFERENCES farms(id), hub_id TEXT NOT NULL REFERENCES telemetry_hubs(id), number TEXT NOT NULL, section TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, control INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT 'hardware' CHECK(source IN ('simulated','hardware')), active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)",
+      },
+      {
+        sql: "INSERT INTO telemetry_nodes_v2(id,farm_id,hub_id,number,section,x,y,control,source,active,created_at) SELECT id,farm_id,hub_id,number,section,x,y,control,'hardware',active,created_at FROM telemetry_nodes",
+      },
+      { sql: "DROP TABLE telemetry_nodes" },
+      { sql: "ALTER TABLE telemetry_nodes_v2 RENAME TO telemetry_nodes" },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS telemetry_nodes_farm ON telemetry_nodes(farm_id)",
+      },
+    ]);
+  } finally {
+    await db.prepare("PRAGMA foreign_keys=ON").run();
+  }
+}
+
+async function migrateTelemetrySources(db: CoopDatabase) {
+  for (const table of [
+    "telemetry_hubs",
+    "telemetry_nodes",
+    "sensor_readings",
+  ] as const) {
+    const columns = new Set(
+      (await db.prepare(`PRAGMA table_info(${table})`).all()).map((row) =>
+        String(row.name),
+      ),
+    );
+    if (!columns.has("source"))
+      await db
+        .prepare(
+          `ALTER TABLE ${table} ADD COLUMN source TEXT NOT NULL DEFAULT 'hardware' CHECK(source IN ('simulated','hardware'))`,
+        )
+        .run();
+  }
+  // Existing simulator records pre-date explicit provenance. These stable
+  // firmware/device identifiers let the migration label them without changing
+  // physical gateway data.
+  await db
+    .prepare(
+      "UPDATE sensor_readings SET source='simulated' WHERE firmware_version LIKE 'simulator-%'",
+    )
+    .run();
+  await db
+    .prepare(
+      "UPDATE telemetry_nodes SET source='simulated' WHERE id IN (SELECT DISTINCT node_id FROM sensor_readings WHERE source='simulated')",
+    )
+    .run();
+  await db
+    .prepare(
+      "UPDATE telemetry_hubs SET source='simulated' WHERE id IN (SELECT DISTINCT hub_id FROM sensor_readings WHERE source='simulated') OR id IN (SELECT hub_id FROM hub_pairings)",
+    )
+    .run();
+  await db
+    .prepare(
+      "CREATE INDEX IF NOT EXISTS sensor_readings_farm_source_time ON sensor_readings(farm_id,source,sampled_at DESC)",
+    )
+    .run();
+}
+
 async function migrateLegacyUsersTable(db: CoopDatabase) {
-  const legacy = await db
+  const legacy = (await db
     .prepare(
       "SELECT sql FROM sqlite_schema WHERE type='table' AND name='users'",
     )
-    .get() as { sql?: string } | undefined;
+    .get()) as { sql?: string } | undefined;
   if (!legacy?.sql) return;
   const definition = legacy.sql;
-  if (definition.includes("'admin'") || !definition.includes("'technician'")) return;
+  if (definition.includes("'admin'") || !definition.includes("'technician'"))
+    return;
   await db.prepare("PRAGMA foreign_keys=OFF").run();
   try {
     await db.batch([
@@ -250,9 +354,15 @@ async function migrateLegacyUsersTable(db: CoopDatabase) {
 
 async function disableLegacyDefaultAdmin(db: CoopDatabase) {
   const user = await db
-    .prepare("SELECT id,password_hash FROM users WHERE username=? AND role='admin'")
+    .prepare(
+      "SELECT id,password_hash FROM users WHERE username=? AND role='admin'",
+    )
     .get("team.admin");
-  if (!user || !(await verifyPassword("password.admin123", String(user.password_hash)))) return;
+  if (
+    !user ||
+    !(await verifyPassword("password.admin123", String(user.password_hash)))
+  )
+    return;
   await db.batch([
     {
       sql: "UPDATE users SET active=0,must_change=1 WHERE id=?",
@@ -268,11 +378,7 @@ export async function openDatabase(
   mode: "cloud" | "hub" | "standalone" = turso ? "cloud" : "standalone",
 ): Promise<CoopDatabase> {
   let database: CoopDatabase;
-  if (mode === "hub") {
-    if (!turso)
-      throw new Error(
-        "Hub mode requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN for cloud synchronization.",
-      );
+  if (mode === "hub" && turso) {
     const commissioned = existsSync(path);
     mkdirSync(dirname(path), { recursive: true });
     const { connect } = await import("@tursodatabase/sync");
@@ -315,10 +421,15 @@ export async function openDatabase(
     );
   } else database = new LocalDatabase(path);
   await database.batch(schema.map((sql) => ({ sql })));
+  await migrateTelemetryHubIndex(database);
+  await migrateTelemetryNodeSections(database);
+  await migrateTelemetrySources(database);
   await migrateLegacyUsersTable(database);
   await disableLegacyDefaultAdmin(database);
   const farmColumns = new Set(
-    (await database.prepare("PRAGMA table_info(farms)").all()).map((row) => String(row.name)),
+    (await database.prepare("PRAGMA table_info(farms)").all()).map((row) =>
+      String(row.name),
+    ),
   );
   const columnsToAdd = [
     ["customer_name", "TEXT"],
@@ -329,7 +440,9 @@ export async function openDatabase(
   ] as const;
   for (const [column, definition] of columnsToAdd) {
     if (!farmColumns.has(column))
-      await database.prepare(`ALTER TABLE farms ADD COLUMN ${column} ${definition}`).run();
+      await database
+        .prepare(`ALTER TABLE farms ADD COLUMN ${column} ${definition}`)
+        .run();
   }
   const farms = await database.prepare("SELECT id FROM farms").all();
   if (farms.length)
@@ -343,7 +456,10 @@ export async function openDatabase(
 }
 
 export function farmCode(id: string) {
-  return `CG-PH-${id.replace(/[^a-f0-9]/gi, "").slice(0, 8).toUpperCase()}`;
+  return `CG-PH-${id
+    .replace(/[^a-f0-9]/gi, "")
+    .slice(0, 8)
+    .toUpperCase()}`;
 }
 
 export async function createFarm(

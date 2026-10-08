@@ -20,6 +20,7 @@ import {
 } from '../services/farmCache';
 import { useAuth } from './AuthProvider';
 import type { HouseSurveyDraft } from '../domain/setup';
+import type { Role } from '../domain/types';
 import { en } from '../i18n/en';
 
 interface FarmContextValue extends Pick<
@@ -38,7 +39,7 @@ interface FarmContextValue extends Pick<
   lastSyncedAt: number;
   pendingCount: number;
   revision: number;
-  readingSource: 'sample' | 'telemetry';
+  readingSource: 'sample' | 'simulated' | 'hardware';
   retryLoad: () => Promise<void>;
   refresh: () => Promise<void>;
   perform: (action: LocalAction, message?: string) => Promise<boolean>;
@@ -48,9 +49,14 @@ interface FarmContextValue extends Pick<
   saveSurvey: (draft: HouseSurveyDraft, open?: boolean) => Promise<boolean>;
   importLegacy: () => Promise<void>;
   hasLegacy: boolean;
+  previewMode: boolean;
 }
 const Context = createContext<FarmContextValue | null>(null);
-export function FarmProvider({ children }: React.PropsWithChildren) {
+export function FarmProvider({
+  children,
+  roleOverride,
+  readOnly = false,
+}: React.PropsWithChildren<{ roleOverride?: Role; readOnly?: boolean }>) {
   const auth = useAuth();
   if (!auth.record) throw new Error('A signed-in account is required');
   const { session, farmId } = auth.record,
@@ -294,9 +300,18 @@ export function FarmProvider({ children }: React.PropsWithChildren) {
     user.role === 'technician' && !savedData.site.survey
       ? { ...savedData, snapshot: { ...savedData.snapshot, sensors: [], alerts: [] } }
       : savedData;
+  const visibleData = roleOverride
+    ? { ...data, context: { ...data.context, role: roleOverride } }
+    : data;
+  const guardedPerform: FarmContextValue['perform'] = readOnly
+    ? async () => {
+        notify('Owner interface preview is read-only.');
+        return false;
+      }
+    : perform;
   const value: FarmContextValue = {
-    ...data,
-    data,
+    ...visibleData,
+    data: visibleData,
     now,
     ready,
     loadError,
@@ -310,40 +325,47 @@ export function FarmProvider({ children }: React.PropsWithChildren) {
     revision: cache?.revision ?? 0,
     readingSource: cache?.readings ?? 'sample',
     hasLegacy,
+    previewMode: readOnly,
     notify,
-    perform,
+    perform: guardedPerform,
     retryLoad: () => serial(hydrate),
     refresh: () => serial(sync),
     acknowledge: async (id) => {
-      await perform({ type: 'ack', id }, en.toastAck);
+      await guardedPerform({ type: 'ack', id }, en.toastAck);
     },
     requestFullPower: async () => {
-      await perform({ type: 'fullPower' });
+      await guardedPerform({ type: 'fullPower' });
     },
     saveSurvey: (draft, open) =>
-      perform({ type: 'house', value: draft, open }, 'House details saved.'),
-    importLegacy: () =>
-      serial(async () => {
-        const raw = await AsyncStorage.getItem(LOCAL_FARM_KEY);
-        if (!raw) throw new Error('No previous phone records found.');
-        let previous: unknown;
-        try {
-          previous = JSON.parse(raw);
-        } catch {
-          throw new Error('The previous records could not be read.');
+      guardedPerform({ type: 'house', value: draft, open }, 'House details saved.'),
+    importLegacy: readOnly
+      ? async () => {
+          notify('Owner interface preview is read-only.');
         }
-        if (!validLocalFarm(previous))
-          throw new Error('The previous records are invalid. They have been kept on this phone.');
-        const result = await api.import(server, token.current, farmId, previous);
-        await commit({
-          version: 1,
-          ...result,
-          pending: current.current?.pending ?? [],
-          syncedAt: Date.now(),
-        });
-        setConnected(true);
-        notify('Previous phone records copied into this farm.');
-      }),
+      : () =>
+          serial(async () => {
+            const raw = await AsyncStorage.getItem(LOCAL_FARM_KEY);
+            if (!raw) throw new Error('No previous phone records found.');
+            let previous: unknown;
+            try {
+              previous = JSON.parse(raw);
+            } catch {
+              throw new Error('The previous records could not be read.');
+            }
+            if (!validLocalFarm(previous))
+              throw new Error(
+                'The previous records are invalid. They have been kept on this phone.',
+              );
+            const result = await api.import(server, token.current, farmId, previous);
+            await commit({
+              version: 1,
+              ...result,
+              pending: current.current?.pending ?? [],
+              syncedAt: Date.now(),
+            });
+            setConnected(true);
+            notify('Previous phone records copied into this farm.');
+          }),
   };
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

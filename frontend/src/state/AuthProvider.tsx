@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { api, ApiError, normalizeServer } from '../services/api';
 import type { Session } from '../services/apiTypes';
+import { hubServerFromQr } from '../domain/hubPairing';
 
 const SESSION_KEY = 'coopguard.auth.v1';
 const HUBS_KEY = 'coopguard.hubs.v1';
@@ -36,10 +37,13 @@ interface AuthContextValue {
   cloudOnline: boolean;
   hubOnline: boolean;
   error: string | null;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, serverOverride?: string) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (current: string, next: string) => Promise<void>;
-  pairHub: (value: string) => Promise<void>;
+  pairHub: (
+    value: string,
+    transport?: 'wifi' | 'usb',
+  ) => Promise<'claimed' | 'replacement_pending'>;
   forgetHub: () => Promise<void>;
   selectFarm: (id: string) => Promise<void>;
   selectFarmByCode: (code: string) => Promise<void>;
@@ -289,24 +293,32 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     cloudOnline,
     hubOnline,
     error,
-    login: async (username, password) => {
+    login: async (username, password, serverOverride) => {
       const generation = ++epoch.current;
       setError(null);
-      let loginServer = CLOUD_SERVER;
+      let loginServer = serverOverride ? normalizeServer(serverOverride) : CLOUD_SERVER;
       let session: Session;
-      try {
-        session = await api.login(CLOUD_SERVER, username.trim(), password);
-        setCloudOnline(true);
-      } catch (cloudError) {
-        const canFallback =
-          cloudError instanceof ApiError && (cloudError.status === 0 || cloudError.status >= 500);
-        const pairedHub = Object.values(hubs.current)[0]?.server;
-        if (!canFallback || !pairedHub) throw cloudError;
-        loginServer = pairedHub;
-        session = await api.login(pairedHub, username.trim(), password);
+      if (serverOverride) {
+        const health = await api.health(loginServer);
+        if (health.service !== 'CoopGuard' || health.mode !== 'hub')
+          throw new Error('This address is not a CoopGuard laptop hub.');
+        session = await api.login(loginServer, username.trim(), password);
         setCloudOnline(false);
         setHubOnline(true);
-      }
+      } else
+        try {
+          session = await api.login(CLOUD_SERVER, username.trim(), password);
+          setCloudOnline(true);
+        } catch (cloudError) {
+          const canFallback =
+            cloudError instanceof ApiError && (cloudError.status === 0 || cloudError.status >= 500);
+          const pairedHub = Object.values(hubs.current)[0]?.server;
+          if (!canFallback || !pairedHub) throw cloudError;
+          loginServer = pairedHub;
+          session = await api.login(pairedHub, username.trim(), password);
+          setCloudOnline(false);
+          setHubOnline(true);
+        }
       if (session.account.role !== 'admin' && !session.farms.length)
         throw new Error('No farm is assigned. Contact the CoopGuard team.');
       if (generation !== epoch.current) return;
@@ -344,28 +356,48 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       if (!saved) throw new Error('Sign in first.');
       const generation = ++epoch.current;
       const session = await api.password(
-        CLOUD_SERVER,
+        saved.server,
         saved.session.token,
         currentPassword,
         newPassword,
       );
       if (generation !== epoch.current) return;
-      const next = { ...saved, server: CLOUD_SERVER, session, verifiedAt: Date.now() };
+      const next = { ...saved, session, verifiedAt: Date.now() };
       await store(next);
-      setServer(CLOUD_SERVER);
-      setCloudOnline(true);
-      setHubOnline(false);
-      setActiveConnection('cloud');
+      setServer(saved.server);
+      setCloudOnline(saved.server === CLOUD_SERVER);
+      setHubOnline(saved.server !== CLOUD_SERVER);
+      setActiveConnection(saved.server === CLOUD_SERVER ? 'cloud' : 'hub');
       setOnline(true);
     },
-    pairHub: async (value) => {
+    pairHub: async (value, transport = 'wifi') => {
       const saved = current.current;
       if (!saved || saved.session.account.role !== 'technician')
         throw new Error('Only a CoopGuard technician can pair a farm hub.');
-      const candidate = normalizeServer(value);
+      let candidate: string;
+      let pairingQr: string | null = null;
+      try {
+        candidate = hubServerFromQr(value, transport).server;
+        pairingQr = value;
+      } catch (parseError) {
+        if (value.trim().startsWith('{')) throw parseError;
+        candidate = normalizeServer(value);
+      }
       const health = await api.health(candidate);
       if (health.service !== 'CoopGuard' || health.mode !== 'hub' || !health.hubId)
         throw new Error('This address is not a commissioned CoopGuard farm hub.');
+      if (pairingQr) {
+        const result = await api.claimHub(
+          candidate,
+          saved.session.token,
+          saved.farmId,
+          pairingQr,
+          transport,
+        );
+        if (result.status === 'replacement_pending') return result.status;
+        if (result.hubId !== health.hubId)
+          throw new Error('The scanned QR belongs to a different hub than this address.');
+      }
       const next = {
         ...hubs.current,
         [saved.farmId]: { server: candidate, hubId: health.hubId, pairedAt: Date.now() },
@@ -373,6 +405,7 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       await AsyncStorage.setItem(HUBS_KEY, JSON.stringify(next));
       hubs.current = next;
       await validate(saved);
+      return 'claimed';
     },
     forgetHub: async () => {
       const saved = current.current;

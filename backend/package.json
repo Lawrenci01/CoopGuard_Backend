@@ -10,6 +10,9 @@
     "start": "tsx src/server.ts",
     "provision": "tsx src/provision.ts",
     "provision:telemetry": "tsx src/provisionTelemetry.ts",
+    "hub:create": "tsx src/createHub.ts",
+    "hub:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-laptop-hub.ps1",
+    "hub:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-laptop-hub.ps1",
     "reset-data": "tsx src/purge.ts",
     "reprovision": "tsx src/reprovision.ts",
     "test": "tsx --test tests/*.test.ts",
@@ -21,10 +24,12 @@
     "@libsql/client": "^0.18.0",
     "@tursodatabase/sync": "^0.8.1",
     "fastify": "5.12.5",
+    "qrcode": "1.5.4",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.19.0",
+    "@types/qrcode": "1.5.6",
     "tsx": "4.23.15",
     "typescript": "6.0.3"
   }

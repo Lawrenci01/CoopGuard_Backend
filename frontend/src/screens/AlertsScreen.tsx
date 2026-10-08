@@ -24,6 +24,7 @@ export function AlertsScreen() {
   return (
     <ScreenFrame
       tab="Alerts"
+      subtitle="Conditions requiring human review"
       action={
         <Chip tone="amber">
           {snapshot.alerts.filter((a) => a.status !== 'resolved').length} open
@@ -44,7 +45,15 @@ export function AlertsScreen() {
         </Card>
       )}
       {alerts.map((alert) => (
-        <Card key={alert.id} style={{ padding: 18, gap: 12 }}>
+        <Card
+          key={alert.id}
+          style={{
+            padding: 17,
+            gap: 12,
+            borderTopWidth: alert.severity === 'warning' ? 3 : 1,
+            borderTopColor: alert.severity === 'warning' ? colors.red : colors.border,
+          }}
+        >
           <View style={[styles.row, { alignItems: 'flex-start' }]}>
             {alert.severity === 'warning' ? (
               <TriangleAlert size={21} color={colors.amber} />

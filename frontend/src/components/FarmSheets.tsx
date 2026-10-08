@@ -10,6 +10,7 @@ import { colors } from '../theme';
 import { useFarm } from '../state/FarmProvider';
 import { Button, Card, Chip, Choice, Label, Sheet, styles } from './ui';
 import { enabledMetrics } from '../domain/siteWorkflow';
+import { houseGrid } from '../domain/houseLayout';
 
 export function SensorSheet({ sensor, onClose }: { sensor: Sensor | null; onClose: () => void }) {
   const { snapshot, now, context, data } = useFarm();
@@ -178,6 +179,9 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
   const [step, setStep] = useState(0),
     [scanned, setScanned] = useState(false),
     [section, setSection] = useState<Section>('A');
+  const house = data.site.survey?.house ?? data.house;
+  const layout = houseGrid(house?.lengthMetres ?? 90, house?.widthMetres ?? 12);
+  const selectedSection = layout.sections.includes(section) ? section : layout.sections[0]!;
   const [busy, setBusy] = useState(false);
   const [number] = useState(() =>
     String(
@@ -250,9 +254,13 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
         )}
         {step === 1 && (
           <Choice
-            values={['A', 'B', 'C']}
-            selected={section}
-            labels={{ A: `${en.section} A`, B: `${en.section} B`, C: `${en.section} C` }}
+            values={layout.sections}
+            selected={selectedSection}
+            labels={
+              Object.fromEntries(
+                layout.sections.map((value) => [value, `${en.section} ${value}`]),
+              ) as Record<Section, string>
+            }
             onSelect={setSection}
           />
         )}
@@ -292,7 +300,7 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
           <Card style={{ backgroundColor: colors.greenSoft }}>
             {[
               `Sample Sensor ${number}`,
-              `${en.section} ${section}`,
+              `${en.section} ${selectedSection}`,
               role === 'control' ? en.testYes : en.sensingOnly,
               en.calibrationDemo,
             ].map((item) => (
@@ -322,7 +330,7 @@ export function AddSensorWizard({ visible, onClose }: { visible: boolean; onClos
                   await perform(
                     {
                       type: 'addSensor',
-                      section,
+                      section: selectedSection,
                       control: role === 'control',
                       tested: test === 'passed',
                       calibrated,

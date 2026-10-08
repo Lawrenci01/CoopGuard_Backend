@@ -1,5 +1,6 @@
 import type { HouseSurveyDraft } from './setup';
 import type { MetricKey } from './types';
+import { houseGrid } from './houseLayout';
 
 export type Answer = 'yes' | 'no' | 'unknown';
 export type HouseType = 'open' | 'tunnel' | 'mixed' | 'unknown';
@@ -425,6 +426,7 @@ export function surveyMissing(s: SiteSurvey): string[] {
 }
 
 export function buildInstallationPlan(s: SiteSurvey, now = Date.now()): InstallationPlan {
+  const layout = houseGrid(s.house.lengthMetres, s.house.widthMetres);
   const blockers: string[] = [];
   const restrictions: string[] = [];
   if (s.safety.wiring === 'damaged') blockers.push('Visible wiring damage must be resolved.');
@@ -485,8 +487,8 @@ export function buildInstallationPlan(s: SiteSurvey, now = Date.now()): Installa
   return {
     generatedAt: now,
     recommendedMode: restrictions.length === 0 ? 'full_candidate' : 'monitor',
-    sections: Math.max(1, Math.ceil(Math.max(s.house.lengthMetres, s.house.widthMetres) / 30)),
-    nodeCount: s.sensors.plannedNodes,
+    sections: layout.count,
+    nodeCount: Math.max(s.sensors.plannedNodes, layout.count),
     metrics,
     equipment: s.equipment
       .filter((e) => e.count > 0)

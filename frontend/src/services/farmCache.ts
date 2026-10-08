@@ -27,7 +27,7 @@ export function validFarmCache(value: unknown): value is FarmCache {
       validLocalFarm(v.state) &&
       Number.isInteger(v.revision) &&
       v.revision >= 0 &&
-      (v.readings === undefined || ['sample', 'telemetry'].includes(v.readings)) &&
+      (v.readings === undefined || ['sample', 'simulated', 'hardware'].includes(v.readings)) &&
       Number.isFinite(v.syncedAt) &&
       Array.isArray(v.pending) &&
       v.pending.length <= 1000 &&
@@ -58,6 +58,12 @@ export async function readFarmCache(storage: KeyValueStorage, key: string) {
   } catch {
     value = null;
   }
+  if (
+    value &&
+    typeof value === 'object' &&
+    (value as { readings?: unknown }).readings === 'telemetry'
+  )
+    (value as { readings: string }).readings = 'hardware';
   if (!validFarmCache(value))
     throw new Error('Saved farm records could not be read. They have not been overwritten.');
   return value;

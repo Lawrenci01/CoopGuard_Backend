@@ -1,28 +1,41 @@
-import { useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { ArrowRight, CheckCircle2, Info, TriangleAlert } from 'lucide-react-native';
+import {
+  CheckCircle2,
+  ChevronRight,
+  Droplets,
+  Info,
+  Leaf,
+  Thermometer,
+  TriangleAlert,
+  Wind,
+} from 'lucide-react-native';
 import { en, relativeTime } from '../i18n/en';
 import { colors } from '../theme';
 import { useFarm } from '../state/FarmProvider';
-import { Button, Card, Label, Sheet, styles } from '../components/ui';
+import { useAuth } from '../state/AuthProvider';
+import { Button, Card, Chip, Label, styles } from '../components/ui';
 import { ScreenFrame } from '../components/ScreenFrame';
 import { Equipment } from '../components/Equipment';
 import { FlockManager } from '../components/FarmManagement';
-import { HouseSetupForm } from '../components/HouseSetupForm';
 import { metricUnits } from '../data/fixtures';
 import { formatReading, summarizeReadings } from '../domain/readings';
 import { houseAttention } from '../domain/attention';
-import type { TabName } from '../domain/types';
+import type { MetricKey, TabName } from '../domain/types';
 import { roleHomeTitle } from '../domain/roles';
 import { enabledMetrics } from '../domain/siteWorkflow';
+import { houseGrid, sectionIndex } from '../domain/houseLayout';
+
+const metricIcon = (metric: MetricKey) =>
+  metric === 'temperature' ? Thermometer : metric === 'humidity' ? Droplets : Wind;
 
 export function DashboardScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<Record<TabName, undefined>>>();
+  const auth = useAuth();
   const { snapshot, context, now, data } = useFarm();
-  const [setup, setSetup] = useState(false),
-    [next, setNext] = useState(false);
+  const house = data.site.survey?.house ?? data.house;
+  const layout = houseGrid(house?.lengthMetres ?? 90, house?.widthMetres ?? 12);
   const attention = houseAttention(snapshot);
   const clear = attention.kind === 'clear';
   const informational = attention.kind === 'unclassified';
@@ -40,152 +53,298 @@ export function DashboardScreen() {
   const body =
     attention.kind === 'alert'
       ? attention.alert.titleKey === 'heatAlert'
-        ? `Check the fans and airflow in Section ${attention.alert.section}.`
-        : 'Check the sensor’s power and position.'
+        ? `Temperature is above the reviewed target in Section ${attention.alert.section}.`
+        : 'The latest node status needs a human check.'
       : attention.kind === 'reading'
         ? 'Open the house map to see where to check.'
         : attention.kind === 'incomplete'
           ? 'Check the sensors before relying on the house average.'
           : attention.kind === 'unclassified'
-            ? 'These values are for observation. A technician must approve the farm limits before CoopGuard labels them normal, watch, or urgent.'
+            ? 'These values are for observation until a technician approves the farm limits.'
             : 'Keep checking the house during your usual rounds.';
-  const reporting = snapshot.sensors.filter((s) => s.online).length;
+  const reporting = snapshot.sensors.filter((sensor) => sensor.online).length;
   const overviewMetrics = enabledMetrics(data.site).slice(0, 2);
+  const firstName = auth.record?.session.account.name.split(/\s+/)[0] ?? 'there';
+  const attentionTime =
+    attention.kind === 'alert' ? attention.alert.detectedAt : snapshot.sampledAt;
+
   return (
-    <ScreenFrame tab="Dashboard" title={roleHomeTitle[context.role]}>
+    <ScreenFrame tab="Dashboard" hideTitle>
+      <View
+        style={[
+          styles.row,
+          { justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 2 },
+        ]}
+      >
+        <View>
+          <Label style={{ color: colors.muted, fontSize: 11 }}>Good morning, {firstName}</Label>
+          <Label
+            accessibilityRole="header"
+            weight="bold"
+            style={{ fontSize: 26, lineHeight: 32, letterSpacing: -0.7 }}
+          >
+            {roleHomeTitle[context.role]}
+          </Label>
+        </View>
+      </View>
+
       <Card
         testID="house-attention"
         style={{
-          padding: 18,
-          gap: 12,
+          gap: 10,
+          padding: 16,
+          marginBottom: 7,
           backgroundColor: clear
             ? colors.greenSoft
             : informational
               ? colors.blueSoft
               : colors.amberSoft,
+          borderColor: clear ? '#CFE2D4' : informational ? '#C9DFEE' : '#EDD39B',
         }}
       >
-        {needsAttention && (
-          <Label weight="bold" style={{ fontSize: 12, color: colors.amber }}>
-            Needs attention
+        <View style={[styles.row, { justifyContent: 'space-between' }]}>
+          <Chip tone={clear ? 'green' : informational ? 'blue' : 'amber'}>
+            {clear ? 'Clear' : informational ? 'Monitoring' : 'Attention'}
+          </Chip>
+          <Label style={{ color: colors.muted, fontSize: 9 }}>
+            Updated {relativeTime(attentionTime, now).toLowerCase()}
           </Label>
-        )}
-        {informational && (
-          <Label weight="bold" style={{ fontSize: 12, color: colors.blue }}>
-            Monitoring
-          </Label>
-        )}
+        </View>
         <View style={styles.row}>
           {clear ? (
-            <CheckCircle2 size={21} color={colors.green} />
+            <CheckCircle2 size={20} color={colors.green} />
           ) : informational ? (
-            <Info size={21} color={colors.blue} />
+            <Info size={20} color={colors.blue} />
           ) : (
-            <TriangleAlert size={21} color={colors.amber} />
+            <TriangleAlert size={20} color={colors.amber} />
           )}
-          <Label weight="bold" style={{ flex: 1, fontSize: 20, lineHeight: 27 }}>
+          <Label weight="bold" style={{ flex: 1, fontSize: 19, lineHeight: 25 }}>
             {title}
           </Label>
         </View>
-        <Label>{body}</Label>
+        <Label style={{ color: informational ? '#4C6675' : colors.muted, fontSize: 11 }}>
+          {body}
+        </Label>
         {needsAttention && (
-          <Button
+          <Pressable
             testID="overview-attention-action"
-            compact
-            icon={ArrowRight}
+            accessibilityRole="button"
             onPress={() => navigation.navigate(attention.kind === 'alert' ? 'Alerts' : 'Heat Map')}
+            style={{
+              minHeight: 45,
+              marginTop: 2,
+              paddingTop: 11,
+              borderTopWidth: 1,
+              borderColor: '#EAD7AA',
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}
           >
-            {attention.kind === 'alert'
-              ? `View ${attention.count > 1 ? `${attention.count} alerts` : 'alert'}`
-              : 'Take a look'}
-          </Button>
+            <Wind size={17} color={colors.amber} />
+            <Label weight="bold" style={{ flex: 1, color: '#795910', fontSize: 10 }}>
+              Inspect fans and airflow
+            </Label>
+            <ChevronRight size={17} color={colors.amber} />
+          </Pressable>
         )}
       </Card>
-      <Card style={{ padding: 18, gap: 14 }}>
-        <View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}>
-          <Label weight="bold">House readings</Label>
-          <Label style={{ color: colors.muted, fontSize: 11 }}>
-            {context.connection === 'local' ? 'Recorded' : 'Saved'}{' '}
-            {relativeTime(snapshot.sampledAt, now).toLowerCase()}
+
+      <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'flex-end' }]}>
+        <View>
+          <Label weight="bold" style={{ fontSize: 16 }}>
+            House readings
+          </Label>
+          <Label
+            style={{
+              color: colors.muted,
+              fontSize: 9,
+              textTransform: 'uppercase',
+              letterSpacing: 0.4,
+            }}
+          >
+            Whole house average {'\u00B7'} {relativeTime(snapshot.sampledAt, now)}
           </Label>
         </View>
-        <View style={{ flexDirection: 'row', gap: 20 }}>
-          {overviewMetrics.map((metric) => {
-            const summary = summarizeReadings(snapshot.sensors, metric);
+        <Chip tone={reporting === snapshot.sensors.length ? 'green' : 'amber'}>
+          {reporting} of {snapshot.sensors.length} nodes
+        </Chip>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        {overviewMetrics.map((metric) => {
+          const summary = summarizeReadings(snapshot.sensors, metric);
+          const MetricIcon = metricIcon(metric);
+          return (
+            <Card key={metric} style={{ flex: 1, padding: 15 }}>
+              <View style={[styles.row, { gap: 7 }]}>
+                <View
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 8,
+                    backgroundColor: colors.greenSoft,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <MetricIcon size={17} color={colors.green} strokeWidth={1.8} />
+                </View>
+                <Label weight="bold" style={{ flex: 1, fontSize: 10 }}>
+                  {en.metrics[metric]}
+                </Label>
+              </View>
+              <Label
+                weight="bold"
+                style={{ fontSize: 30, lineHeight: 38, letterSpacing: -1.3, marginTop: 13 }}
+              >
+                {formatReading(summary.value, metric)}
+                <Label weight="medium" style={{ fontSize: 13, color: colors.muted }}>
+                  {' '}
+                  {metricUnits[metric]}
+                </Label>
+              </Label>
+              <Label style={{ color: colors.muted, fontSize: 8 }}>
+                {summary.condition === 'unclassified'
+                  ? 'Awaiting reviewed limits'
+                  : en.statuses[summary.condition]}
+              </Label>
+            </Card>
+          );
+        })}
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="View house map"
+        onPress={() => navigation.navigate('Heat Map')}
+        style={({ pressed }) => ({
+          minHeight: 82,
+          borderRadius: 15,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.surface,
+          padding: 10,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 11,
+          opacity: pressed ? 0.72 : 1,
+        })}
+      >
+        <View
+          style={{
+            width: 115,
+            height: 56,
+            borderWidth: 2,
+            borderColor: '#B7C7BA',
+            borderRadius: 8,
+            overflow: 'hidden',
+            position: 'relative',
+          }}
+        >
+          {layout.sections.map((section) => {
+            const index = sectionIndex(section);
+            const column = index % layout.columns;
+            const row = Math.floor(index / layout.columns);
+            const summary = summarizeReadings(
+              snapshot.sensors.filter((sensor) => sensor.section === section),
+              'temperature',
+            );
+            const warm = summary.condition === 'watch' || summary.condition === 'urgent';
             return (
-              <View key={metric} style={{ flex: 1, gap: 3 }}>
-                <Label style={{ color: colors.muted, fontSize: 12 }}>{en.metrics[metric]}</Label>
-                <Label weight="bold" style={{ fontSize: 29, lineHeight: 38 }}>
-                  {formatReading(summary.value, metric)}
-                  <Label style={{ fontSize: 15 }}> {metricUnits[metric]}</Label>
+              <View
+                key={section}
+                style={{
+                  position: 'absolute',
+                  left: (column * 115) / layout.columns,
+                  top: (row * 56) / layout.rows,
+                  width: 115 / layout.columns,
+                  height: 56 / layout.rows,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: warm ? '#FFF0D2' : '#E9F2EB',
+                  borderRightWidth: column === layout.columns - 1 ? 0 : 1,
+                  borderBottomWidth: row === layout.rows - 1 ? 0 : 1,
+                  borderColor: colors.surface,
+                }}
+              >
+                <Label
+                  weight="bold"
+                  style={{ color: warm ? colors.amber : colors.green, fontSize: 8 }}
+                >
+                  {section}
+                </Label>
+                <Label style={{ color: warm ? colors.amber : colors.green, fontSize: 7 }}>
+                  {formatReading(summary.value, 'temperature')}
+                  {'\u00B0'}
                 </Label>
               </View>
             );
           })}
         </View>
-        {reporting !== snapshot.sensors.length && (
-          <Label style={{ color: colors.amber, fontSize: 12 }}>
-            {reporting} of {snapshot.sensors.length} nodes reporting · partial coverage
+        <View style={{ flex: 1 }}>
+          <Label weight="bold" style={{ fontSize: 11 }}>
+            View house map
           </Label>
-        )}
-        <Button compact variant="ghost" onPress={() => navigation.navigate('Heat Map')}>
-          All readings & house map
-        </Button>
-      </Card>
-      {(!data.site.survey || (data.site.plan?.equipment.length ?? 0) > 0) && <Equipment />}
+          <Label style={{ color: colors.muted, fontSize: 8 }}>Installed node locations</Label>
+        </View>
+        <ChevronRight size={18} color={colors.muted} />
+      </Pressable>
+
+      {(!data.site.survey || (data.site.plan?.equipment.length ?? 0) > 0) && (
+        <>
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'flex-end' }]}>
+            <View>
+              <Label weight="bold" style={{ fontSize: 16 }}>
+                Equipment
+              </Label>
+              <Label
+                style={{
+                  color: colors.muted,
+                  fontSize: 9,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                }}
+              >
+                Technician-approved devices
+              </Label>
+            </View>
+            <Chip tone="amber">Simulated output</Chip>
+          </View>
+          <Equipment />
+        </>
+      )}
+
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => context.role === 'owner' && navigation.navigate('Analytics')}
+        style={{
+          minHeight: 58,
+          borderTopWidth: 1,
+          borderColor: colors.border,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingHorizontal: 4,
+        }}
+      >
+        <Leaf size={20} color={colors.green} />
+        <View style={{ flex: 1 }}>
+          <Label weight="bold" style={{ fontSize: 11 }}>
+            Environmental insight
+          </Label>
+          <Label style={{ color: colors.muted, fontSize: 9 }}>
+            Collecting data {'\u00B7'} No AI results yet
+          </Label>
+        </View>
+        <ChevronRight size={18} color={colors.muted} />
+      </Pressable>
+
       {context.role === 'owner' && data.site.survey && !data.flock && <FlockManager nextStep />}
       {context.role === 'worker' && (
         <Button variant="secondary" onPress={() => navigation.navigate('Notes')}>
           Record an inspection
         </Button>
       )}
-      {context.role === 'technician' && (
-        <Button variant="secondary" onPress={() => navigation.navigate('Devices')}>
-          Sensors & maintenance
-        </Button>
-      )}
-      {!data.site.survey && context.role === 'technician' ? (
-        <Button testID="setup-from-home" variant="secondary" onPress={() => setSetup(true)}>
-          Start site survey
-        </Button>
-      ) : !data.site.survey && context.role === 'owner' ? (
-        <Card style={{ gap: 8 }}>
-          <Label weight="bold">Site survey needed</Label>
-          <Label>
-            A CoopGuard technician will survey this house, record its equipment, and prepare the
-            approved setup. You can add your flock after the survey is saved.
-          </Label>
-        </Card>
-      ) : data.site.survey && context.role === 'technician' ? (
-        <Button testID="setup-next-steps" compact variant="ghost" onPress={() => setNext(true)}>
-          Survey & installation status
-        </Button>
-      ) : null}
-      {setup && (
-        <Sheet visible title={en.setupTitle} onClose={() => setSetup(false)}>
-          <HouseSetupForm onDone={() => setSetup(false)} />
-        </Sheet>
-      )}
-      <Sheet visible={next} title="Site survey saved" onClose={() => setNext(false)}>
-        <View style={{ gap: 18 }}>
-          <Label weight="bold">1. {data.site.survey?.farm.houseName} is recorded</Label>
-          <Label>
-            Your house details are saved to the farm server and kept on this phone. Readings and
-            equipment responses are still samples.
-          </Label>
-          <Label weight="bold">2. Confirm the equipment plan</Label>
-          <Label>
-            Record the site findings, place sensors, and keep unverified equipment in monitor-only
-            mode.
-          </Label>
-          <Label weight="bold">3. Complete installation checks</Label>
-          <Label>
-            A technician must pair the hub and sensors, check wiring, and calibrate them. Saving
-            this form does not make the house live.
-          </Label>
-          <Button onPress={() => setNext(false)}>Got it</Button>
-        </View>
-      </Sheet>
     </ScreenFrame>
   );
 }

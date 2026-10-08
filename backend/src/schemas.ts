@@ -15,7 +15,7 @@ export const password = z
   .max(128);
 export const name = z.string().trim().min(1).max(80);
 const id = z.string().min(1).max(100);
-const section = z.enum(["A", "B", "C"]);
+const section = z.string().regex(/^[A-Z]{1,4}$/);
 const simple = (type: string) => z.object({ type: z.literal(type) }).strict();
 export const actionSchema = z.discriminatedUnion("type", [
   simple("fullPower"),
@@ -70,8 +70,8 @@ export const actionSchema = z.discriminatedUnion("type", [
       type: z.literal("moveSensor"),
       id,
       section,
-      x: z.number().min(0.05).max(0.95),
-      y: z.number().min(0.1).max(0.9),
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
     })
     .strict(),
   z.object({ type: z.literal("retireSensor"), id }).strict(),

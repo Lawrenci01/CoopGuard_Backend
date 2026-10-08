@@ -1,92 +1,98 @@
-import { useState } from 'react';
-import { View } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import QRCode from 'react-native-qrcode-svg';
-import { QrCode, RadioTower } from 'lucide-react-native';
-import { deviceSetupProgress, pairingQr } from '../domain/deviceSimulation';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, TextInput, View } from 'react-native';
+import { QrCode, RadioTower, RefreshCw } from 'lucide-react-native';
+import { houseGrid } from '../domain/houseLayout';
+import { parseLaptopHubQr } from '../domain/hubPairing';
 import type { Section } from '../domain/types';
+import { api } from '../services/api';
+import type { FarmDevices } from '../services/apiTypes';
 import { useAuth } from '../state/AuthProvider';
 import { useFarm } from '../state/FarmProvider';
-import { colors } from '../theme';
+import { colors, fonts } from '../theme';
 import { Button, Card, Chip, Choice, Label, Sheet, styles } from './ui';
+import { QrScannerScreen } from './QrScannerScreen';
 
-function QrCard({ value, label }: { value: string; label: string }) {
-  return (
-    <View style={{ alignItems: 'center', gap: 10, paddingVertical: 8 }}>
-      <View style={{ padding: 12, backgroundColor: '#fff', borderRadius: 14 }}>
-        <QRCode value={value} size={178} color={colors.ink} backgroundColor="#fff" />
-      </View>
-      <Label weight="bold">{label}</Label>
-      <Label style={{ color: colors.muted, fontSize: 11, textAlign: 'center' }}>
-        Simulation pairing reference. It contains no account password.
-      </Label>
-    </View>
-  );
-}
+type Transport = 'wifi' | 'usb';
 
-function PairingScanner({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const { perform } = useFarm();
-  const [permission, requestPermission] = useCameraPermissions();
-  const [busy, setBusy] = useState(false);
-
-  return (
-    <Sheet visible={visible} title="Scan CoopGuard QR" onClose={onClose}>
-      <View style={{ gap: 14 }}>
-        {!permission?.granted ? (
-          <>
-            <Label>Camera access is needed only while scanning a hub or node QR code.</Label>
-            <Button onPress={() => void requestPermission()}>Allow camera</Button>
-          </>
-        ) : (
-          <View style={{ height: 360, overflow: 'hidden', borderRadius: 18 }}>
-            <CameraView
-              style={{ flex: 1 }}
-              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-              onBarcodeScanned={
-                busy
-                  ? undefined
-                  : async ({ data }) => {
-                      setBusy(true);
-                      const ok = await perform(
-                        { type: 'pairVirtualDevice', qr: data },
-                        'Virtual device paired and reporting.',
-                      );
-                      setBusy(false);
-                      if (ok) onClose();
-                    }
-              }
-            />
-          </View>
-        )}
-        <Label style={{ color: colors.muted }}>
-          For one-phone testing, use the “Pair this simulated device” button beside its generated
-          QR. Use the camera with a printed QR or a second screen.
-        </Label>
-      </View>
-    </Sheet>
-  );
+function parseNodeQr(value: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('This is not a CoopGuard hub or sensor-node QR code.');
+  }
+  const qr = parsed as Record<string, unknown>;
+  if (
+    qr.type !== 'coopguard-node' ||
+    qr.version !== 1 ||
+    typeof qr.hubId !== 'string' ||
+    typeof qr.nodeId !== 'string' ||
+    typeof qr.section !== 'string' ||
+    !/^[A-Z]{1,4}$/.test(qr.section)
+  )
+    throw new Error('This CoopGuard sensor-node QR code is incomplete or invalid.');
+  return { hubId: qr.hubId, nodeId: qr.nodeId, section: qr.section as Section };
 }
 
 export function DeviceSimulationPanel() {
   const auth = useAuth();
-  const { data, perform } = useFarm();
+  const farm = useFarm();
+  const [devices, setDevices] = useState<FarmDevices | null>(null);
   const [section, setSection] = useState<Section>('A');
+  const [nodeId, setNodeId] = useState('');
   const [scanner, setScanner] = useState(false);
-  const farm = auth.record!.session.farms.find((item) => item.id === auth.record!.farmId)!;
-  const simulation = data.deviceSimulation;
-  const hub = simulation.hub;
-  const progress = deviceSetupProgress(data.site, simulation);
-  const hubQr =
-    hub &&
-    pairingQr({
-      version: 1,
-      kind: 'hub',
-      farmCode: hub.farmCode,
-      deviceId: hub.id,
-      pairingCode: hub.pairingCode,
-    });
+  const [transport, setTransport] = useState<Transport>('wifi');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [removeNodeId, setRemoveNodeId] = useState<string | null>(null);
+  const record = auth.record!;
+  const target = record.session.farms.find((item) => item.id === record.farmId)!;
+  const layout = houseGrid(
+    farm.data.site.survey?.house.lengthMetres ?? 90,
+    farm.data.site.survey?.house.widthMetres ?? 12,
+  );
+  const selectedSection = layout.sections.includes(section) ? section : layout.sections[0]!;
+  const sectionLabels = Object.fromEntries(
+    layout.sections.map((value) => [value, `Section ${value}`]),
+  ) as Record<Section, string>;
 
-  if (!data.site.survey || !data.site.plan) return null;
+  const load = async () => {
+    if (!auth.online) return;
+    setError('');
+    try {
+      setDevices(await api.devices(auth.server, record.session.token, record.farmId));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not load devices.');
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [auth.server, record.farmId]);
+
+  const registerNode = async (requestedId?: string, requestedSection = selectedSection) => {
+    setBusy(true);
+    setError('');
+    try {
+      const added = await api.addNode(
+        auth.server,
+        record.session.token,
+        record.farmId,
+        requestedSection,
+        requestedId?.trim() || undefined,
+      );
+      setNodeId('');
+      await load();
+      await farm.refresh();
+      farm.notify(`${added.nodeId} registered. The hub simulator will begin reporting for it.`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not register node.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!farm.data.site.survey || !farm.data.site.plan) return null;
   return (
     <View style={{ gap: 14 }}>
       <Card style={{ gap: 10 }}>
@@ -96,20 +102,18 @@ export function DeviceSimulationPanel() {
               Hub and sensor-node installation
             </Label>
             <Label style={{ color: colors.muted }}>
-              Farm ID {farm.code} · hardware-flow simulation
+              Farm ID {target.code} · persistent device records
             </Label>
           </View>
-          <Chip tone={progress.ready ? 'green' : 'amber'}>
-            {progress.ready ? 'Devices ready' : 'Setup incomplete'}
-          </Chip>
+          <Button compact variant="ghost" icon={RefreshCw} onPress={() => void load()}>
+            Refresh
+          </Button>
         </View>
         <Label>
-          Pair the hub first. Then add each planned sensor node, choose its house section, and
-          confirm that it reports through the hub.
+          Scan and register the laptop hub first. Add each sensor node under that hub; all roles
+          then read the same saved records.
         </Label>
-        {progress.missing.map((item) => (
-          <Label key={item}>• {item}</Label>
-        ))}
+        {!!error && <Label style={{ color: colors.red }}>{error}</Label>}
       </Card>
 
       <Card style={{ gap: 12 }}>
@@ -118,130 +122,192 @@ export function DeviceSimulationPanel() {
           <Label weight="bold" style={{ flex: 1 }}>
             Farm hub
           </Label>
-          {hub && <Chip tone={hub.status === 'reporting' ? 'green' : 'amber'}>{hub.status}</Chip>}
+          {devices?.hub && <Chip tone="green">paired</Chip>}
         </View>
-        {!hub ? (
-          <Button
-            testID="create-virtual-hub"
-            onPress={() =>
-              void perform(
-                { type: 'createVirtualHub', farmCode: farm.code },
-                'Farm hub record created.',
-              )
-            }
-          >
-            Create hub QR
-          </Button>
+        {!devices ? (
+          <ActivityIndicator color={colors.green} />
+        ) : devices.hub ? (
+          <>
+            <Label weight="bold">{devices.hub.id}</Label>
+            <Label style={{ color: colors.muted, fontSize: 11 }}>
+              {devices.hub.source === 'simulated' ? 'Laptop simulation' : 'Physical hardware'} ·{' '}
+              {devices.hub.lastSeenAt
+                ? `last transmission ${new Date(devices.hub.lastSeenAt).toLocaleString()}`
+                : 'waiting for first transmission'}
+            </Label>
+          </>
         ) : (
           <>
-            <Label>{hub.id}</Label>
-            {hub.status === 'created' && hubQr && (
-              <>
-                <QrCard value={hubQr} label={hub.id} />
-                <Button
-                  testID="pair-virtual-hub"
-                  onPress={() =>
-                    void perform(
-                      { type: 'pairVirtualDevice', qr: hubQr },
-                      'Hub paired and reporting.',
-                    )
-                  }
-                >
-                  Confirm this hub for simulation
-                </Button>
-              </>
-            )}
-            <Button variant="ghost" onPress={() => setScanner(true)} icon={QrCode}>
-              Scan hub or node QR
+            <Choice
+              values={['wifi', 'usb']}
+              selected={transport}
+              labels={{ wifi: 'Local WiFi', usb: 'USB cable' }}
+              onSelect={setTransport}
+            />
+            <Button testID="create-virtual-hub" icon={QrCode} onPress={() => setScanner(true)}>
+              Add Hub · Scan QR
             </Button>
-            {!['normal_monitor', 'normal_control'].includes(data.site.status) && (
-              <Button
-                variant="danger"
-                onPress={() => void perform({ type: 'removeVirtualDevice', id: hub.id })}
-              >
-                Remove hub
-              </Button>
-            )}
           </>
         )}
       </Card>
 
-      {hub?.status === 'reporting' && (
+      {!!devices?.hub && (
         <Card style={{ gap: 14 }}>
           <Label weight="bold" style={{ fontSize: 17 }}>
-            Sensor nodes · {progress.reportingNodes}/{progress.requiredNodes} reporting
+            Sensor nodes · {devices.nodes.length} registered
           </Label>
           <Label style={{ color: colors.muted }}>
-            Every node has temperature, humidity, ammonia, carbon dioxide, and litter-moisture
-            sensors. Sound analysis is coming soon while the hub AI model is being trained.
+            Each standard node reports temperature, humidity, ammonia, carbon dioxide, and one
+            litter-moisture reading. Three installed nodes provide three litter measurement points.
+          </Label>
+          <Label style={{ color: colors.muted }}>
+            Coverage plan: {layout.count} {layout.count === 1 ? 'section' : 'sections'} in a{' '}
+            {layout.columns}×{layout.rows} portrait grid.
           </Label>
           <Label weight="bold">House section</Label>
           <Choice
-            values={['A', 'B', 'C']}
-            selected={section}
-            labels={{ A: 'Section A', B: 'Section B', C: 'Section C' }}
+            values={layout.sections}
+            selected={selectedSection}
+            labels={sectionLabels}
             onSelect={setSection}
           />
-          <Button
-            testID="create-virtual-node"
-            onPress={() =>
-              void perform(
-                { type: 'createVirtualNode', farmCode: farm.code, section },
-                'Sensor node QR created.',
-              )
-            }
-          >
-            Create sensor node QR
-          </Button>
-          {simulation.nodes.map((node) => {
-            const qr = pairingQr({
-              version: 1,
-              kind: 'node',
-              farmCode: node.farmCode,
-              deviceId: node.id,
-              pairingCode: node.pairingCode,
-            });
-            return (
-              <Card key={node.id} style={{ gap: 10, padding: 15 }}>
-                <View style={[styles.row, { justifyContent: 'space-between' }]}>
-                  <View style={{ flex: 1 }}>
-                    <Label weight="bold">{node.id}</Label>
-                    <Label style={{ color: colors.muted }}>
-                      Full sensor set · Section {node.section}
-                    </Label>
-                  </View>
-                  <Chip tone={node.status === 'reporting' ? 'green' : 'amber'}>{node.status}</Chip>
+          <TextInput
+            accessibilityLabel="Sensor Node ID"
+            value={nodeId}
+            onChangeText={setNodeId}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            placeholder="Optional Node ID from hardware label"
+            placeholderTextColor={colors.muted}
+            style={{
+              minHeight: 48,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 10,
+              paddingHorizontal: 13,
+              fontFamily: fonts.regular,
+              color: colors.ink,
+              backgroundColor: colors.surface,
+            }}
+          />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Button
+                testID="create-virtual-node"
+                disabled={busy}
+                onPress={() => void registerNode(nodeId)}
+              >
+                {busy ? 'Registering…' : 'Add Node'}
+              </Button>
+            </View>
+            <Button variant="secondary" icon={QrCode} onPress={() => setScanner(true)}>
+              Scan
+            </Button>
+          </View>
+
+          {devices.nodes.map((node) => (
+            <Card key={node.nodeId} style={{ gap: 9, padding: 15 }}>
+              <View style={[styles.row, { justifyContent: 'space-between' }]}>
+                <View style={{ flex: 1 }}>
+                  <Label weight="bold">{node.nodeId}</Label>
+                  <Label style={{ color: colors.muted, fontSize: 11 }}>
+                    Section {node.section} ·{' '}
+                    {node.source === 'simulated' ? 'simulated' : 'hardware'}
+                  </Label>
                 </View>
-                {node.status === 'created' && (
-                  <>
-                    <QrCard value={qr} label={node.id} />
-                    <Button
-                      testID={`pair-${node.id}`}
-                      onPress={() =>
-                        void perform(
-                          { type: 'pairVirtualDevice', qr },
-                          'Sensor node paired and reporting.',
-                        )
-                      }
-                    >
-                      Confirm this node for simulation
-                    </Button>
-                  </>
-                )}
-                {!['normal_monitor', 'normal_control'].includes(data.site.status) && (
-                  <Button
-                    variant="danger"
-                    onPress={() => void perform({ type: 'removeVirtualDevice', id: node.id })}
-                  >
-                    Remove node
-                  </Button>
-                )}
-              </Card>
-            );
-          })}
+                <Chip tone={node.receivedAt ? 'green' : 'amber'}>
+                  {node.receivedAt ? 'reporting' : 'waiting'}
+                </Chip>
+              </View>
+              {node.readings && (
+                <Label style={{ color: colors.muted, fontSize: 11 }}>
+                  {node.readings.temperature.toFixed(1)} °C · {node.readings.humidity.toFixed(0)}%
+                  RH · {node.readings.ammonia.toFixed(1)} ppm NH₃ · {node.readings.co2.toFixed(0)}{' '}
+                  ppm CO₂
+                </Label>
+              )}
+              <Button variant="danger" onPress={() => setRemoveNodeId(node.nodeId)}>
+                Remove node
+              </Button>
+            </Card>
+          ))}
         </Card>
       )}
-      <PairingScanner visible={scanner} onClose={() => setScanner(false)} />
+
+      <QrScannerScreen
+        visible={scanner}
+        title={devices?.hub ? 'Scan Hub or Sensor Node QR' : 'Scan Laptop Hub QR'}
+        instruction="Align the CoopGuard device QR inside the frame. Its identity and farm assignment will be validated."
+        onClose={() => setScanner(false)}
+        onScanned={async (value) => {
+          setScanner(false);
+          setError('');
+          try {
+            try {
+              parseLaptopHubQr(value);
+              const status = await auth.pairHub(value, transport);
+              if (status === 'replacement_pending')
+                farm.notify('Hub replacement sent to an administrator for approval.');
+              else farm.notify('Hub paired to this farm.');
+              await load();
+            } catch (hubError) {
+              if (value.trim().includes('coopguard-hub')) throw hubError;
+              const node = parseNodeQr(value);
+              if (!devices?.hub || node.hubId !== devices.hub.id)
+                throw new Error('This sensor node belongs to a different hub.');
+              await registerNode(node.nodeId, node.section);
+            }
+          } catch (scanError) {
+            setError(
+              scanError instanceof Error ? scanError.message : 'Could not pair this device.',
+            );
+          }
+        }}
+      />
+
+      <Sheet
+        visible={!!removeNodeId}
+        title="Remove sensor node?"
+        onClose={() => setRemoveNodeId(null)}
+      >
+        <View style={{ gap: 14 }}>
+          <Label weight="bold">{removeNodeId}</Label>
+          <Label>
+            The node will stop reporting, but its historical readings will remain in SQLite.
+          </Label>
+          <Button
+            testID="confirm-remove-sensor-node"
+            variant="danger"
+            onPress={async () => {
+              if (!removeNodeId) return;
+              setBusy(true);
+              try {
+                await api.removeNode(
+                  auth.server,
+                  record.session.token,
+                  record.farmId,
+                  removeNodeId,
+                );
+                setRemoveNodeId(null);
+                await load();
+                await farm.refresh();
+                farm.notify('Sensor node removed. Historical readings were retained.');
+              } catch (requestError) {
+                setError(
+                  requestError instanceof Error ? requestError.message : 'Could not remove node.',
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Remove sensor node
+          </Button>
+          <Button variant="secondary" onPress={() => setRemoveNodeId(null)}>
+            Cancel
+          </Button>
+        </View>
+      </Sheet>
     </View>
   );
 }

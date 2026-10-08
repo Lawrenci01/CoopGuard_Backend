@@ -14,6 +14,7 @@ import { FlockManager, Maintenance } from '../components/FarmManagement';
 import { WorkerAccounts } from '../components/WorkerAccounts';
 import { OwnerSiteSummary, SiteWorkflowPanel } from '../components/SiteWorkflowPanel';
 import { DeviceSimulationPanel } from '../components/DeviceSimulationPanel';
+import { houseGrid } from '../domain/houseLayout';
 
 type Panel =
   | 'farm'
@@ -25,7 +26,7 @@ type Panel =
   | 'software'
   | 'diagnostics';
 const titles: Record<Panel, string> = {
-  farm: 'Farm management',
+  farm: 'Farm',
   sensors: 'Devices',
   survey: 'Site survey',
   setup: 'Complete site survey',
@@ -36,7 +37,7 @@ const titles: Record<Panel, string> = {
 };
 
 export function DevicesScreen() {
-  const { snapshot, context, data } = useFarm();
+  const { snapshot, context, data, previewMode } = useFarm();
   const technician = context.role === 'technician';
   const [panel, setPanel] = useState<Panel>(technician ? 'sensors' : 'farm');
   const [query, setQuery] = useState(''),
@@ -61,11 +62,17 @@ export function DevicesScreen() {
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
+  const house = data.site.survey?.house ?? data.house;
+  const layout = houseGrid(house?.lengthMetres ?? 90, house?.widthMetres ?? 12);
+  const sectionList = Array.from(
+    new Set([...layout.sections, ...sensors.map((item) => item.section)]),
+  );
   return (
     <ScreenFrame
       key={panel}
       tab="Devices"
       title={titles[panel]}
+      subtitle={panel === 'farm' ? 'Profile, flock and people' : undefined}
       action={
         panel === 'sensors' && technician ? (
           <Button
@@ -87,21 +94,32 @@ export function DevicesScreen() {
       {panel === 'farm' && context.role === 'owner' && (
         <>
           <OwnerSiteSummary />
-          {data.site.survey ? <FlockManager /> : null}
-          <Card style={{ padding: 16, gap: 8 }}>
-            {(['people'] as const).map((item) => (
-              <Pressable
-                key={item}
-                testID={`settings-${item}`}
-                accessibilityRole="button"
-                onPress={() => setPanel(item)}
-                style={[styles.row, { minHeight: 48 }]}
-              >
-                <Label style={{ flex: 1 }}>{titles[item]}</Label>
-                <ChevronRight size={18} color={colors.muted} />
-              </Pressable>
-            ))}
-          </Card>
+          {previewMode ? (
+            <Card style={{ padding: 16, gap: 6, backgroundColor: colors.blueSoft }}>
+              <Label weight="bold">Read-only owner preview</Label>
+              <Label style={{ color: colors.muted }}>
+                Flock and worker-account changes are hidden while a technician previews this farm.
+              </Label>
+            </Card>
+          ) : (
+            <>
+              {data.site.survey ? <FlockManager /> : null}
+              <Card style={{ padding: 16, gap: 8 }}>
+                {(['people'] as const).map((item) => (
+                  <Pressable
+                    key={item}
+                    testID={`settings-${item}`}
+                    accessibilityRole="button"
+                    onPress={() => setPanel(item)}
+                    style={[styles.row, { minHeight: 48 }]}
+                  >
+                    <Label style={{ flex: 1 }}>{titles[item]}</Label>
+                    <ChevronRight size={18} color={colors.muted} />
+                  </Pressable>
+                ))}
+              </Card>
+            </>
+          )}
         </>
       )}
       {panel === 'survey' && technician && (
@@ -205,7 +223,7 @@ export function DevicesScreen() {
                 </Button>
               </View>
             )}
-            {(['A', 'B', 'C'] as const).map((section) => {
+            {sectionList.map((section) => {
               const group = sensors.filter((s) => s.section === section);
               if (!group.length) return null;
               return (

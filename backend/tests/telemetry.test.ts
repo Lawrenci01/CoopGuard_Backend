@@ -55,21 +55,38 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
     ],
     history: [],
   };
-  await db.prepare("UPDATE farms SET state=? WHERE id=?").run(JSON.stringify(state), farmId);
+  await db
+    .prepare("UPDATE farms SET state=? WHERE id=?")
+    .run(JSON.stringify(state), farmId);
   const credentials = await provisionTelemetryGateway(db, code, clock);
   const password = "Telemetry test password 123!";
-  await db
-    .prepare(
-      "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
-    )
-    .run(
-      "telemetry-tech",
-      "telemetry.tech",
-      "Telemetry technician",
-      "technician",
-      await hashPassword(password),
-      clock,
-    );
+  const passwordHash = await hashPassword(password);
+  await db.batch([
+    ...(
+      [
+        [
+          "telemetry-tech",
+          "telemetry.tech",
+          "Telemetry technician",
+          "technician",
+        ],
+        ["telemetry-owner", "telemetry.owner", "Telemetry owner", "owner"],
+        ["telemetry-worker", "telemetry.worker", "Telemetry worker", "worker"],
+        ["telemetry-admin", "telemetry.admin", "Telemetry admin", "admin"],
+      ] as const
+    ).map(([id, username, accountName, role]) => ({
+      sql: "INSERT INTO users(id,username,name,role,password_hash,must_change,created_at) VALUES(?,?,?,?,?,0,?)",
+      args: [id, username, accountName, role, passwordHash, clock],
+    })),
+    {
+      sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+      args: ["telemetry-owner", farmId],
+    },
+    {
+      sql: "INSERT INTO memberships(user_id,farm_id) VALUES(?,?)",
+      args: ["telemetry-worker", farmId],
+    },
+  ]);
   const app = await createApp(db, { clock: () => clock });
   t.after(async () => {
     await app.close();
@@ -84,6 +101,15 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
   });
   assert.equal(login.statusCode, 200, login.body);
   const token = login.json().token as string;
+  const loginAs = async (username: string) => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: { username, password },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json().token as string;
+  };
   const reading = (nodeId: string, section: "A" | "B", sequence: number) => ({
     messageId: randomUUID(),
     nodeId,
@@ -105,6 +131,7 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
   });
   const batch = {
     schemaVersion: 1,
+    source: "simulated",
     farmCode: code,
     hubId: credentials.hubId,
     sentAt: new Date(clock).toISOString(),
@@ -124,7 +151,10 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
       payload,
     });
 
-  assert.equal((await ingest(batch, "wrong-secret-that-is-long-enough-000000")).statusCode, 401);
+  assert.equal(
+    (await ingest(batch, "wrong-secret-that-is-long-enough-000000")).statusCode,
+    401,
+  );
   const first = await ingest(batch);
   assert.equal(first.statusCode, 200, first.body);
   assert.equal(first.json().accepted, 2);
@@ -134,7 +164,10 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
   assert.equal(duplicate.json().accepted, 0);
   assert.equal(duplicate.json().duplicates, 2);
   assert.equal(
-    Number((await db.prepare("SELECT COUNT(*) count FROM sensor_readings").get())?.count),
+    Number(
+      (await db.prepare("SELECT COUNT(*) count FROM sensor_readings").get())
+        ?.count,
+    ),
     2,
   );
 
@@ -144,11 +177,47 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
     headers: { authorization: `Bearer ${token}` },
   });
   assert.equal(farm.statusCode, 200, farm.body);
-  assert.equal(farm.json().readings, "telemetry");
+  assert.equal(farm.json().readings, "simulated");
   assert.equal(farm.json().state.snapshot.sensors.length, 2);
-  assert.equal(farm.json().state.snapshot.sensors[0].readings.temperature, 28.4);
-  assert.equal(farm.json().state.snapshot.sensors[0].conditions.temperature, "unclassified");
+  assert.equal(
+    farm.json().state.snapshot.sensors[0].readings.temperature,
+    28.4,
+  );
+  assert.equal(
+    farm.json().state.snapshot.sensors[0].conditions.temperature,
+    "unclassified",
+  );
   assert.deepEqual(farm.json().state.snapshot.alerts, []);
+
+  for (const username of ["telemetry.owner", "telemetry.worker"]) {
+    const roleFarm = await app.inject({
+      method: "GET",
+      url: `/v1/farms/${farmId}`,
+      headers: { authorization: `Bearer ${await loginAs(username)}` },
+    });
+    assert.equal(roleFarm.statusCode, 200, roleFarm.body);
+    assert.equal(roleFarm.json().readings, "simulated");
+    assert.deepEqual(
+      roleFarm
+        .json()
+        .state.snapshot.sensors.map(
+          (sensor: { readings: unknown }) => sensor.readings,
+        ),
+      farm
+        .json()
+        .state.snapshot.sensors.map(
+          (sensor: { readings: unknown }) => sensor.readings,
+        ),
+    );
+  }
+  const adminFarms = await app.inject({
+    method: "GET",
+    url: "/v1/admin/farms",
+    headers: { authorization: `Bearer ${await loginAs("telemetry.admin")}` },
+  });
+  assert.equal(adminFarms.statusCode, 200, adminFarms.body);
+  assert.equal(adminFarms.json().farms[0].latest.readings.temperature, 28.4);
+  assert.equal(adminFarms.json().farms[0].latest.source, "simulated");
 
   const latest = await app.inject({
     method: "GET",
@@ -158,6 +227,7 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
   assert.equal(latest.statusCode, 200, latest.body);
   assert.equal(latest.json().classification, "reading_only");
   assert.equal(latest.json().thresholdProfile, null);
+  assert.equal(latest.json().nodes[0].source, "simulated");
   assert.equal(latest.json().nodes[1].readings.temperature, 29.2);
 
   const history = await app.inject({
@@ -168,6 +238,20 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
   assert.equal(history.statusCode, 200, history.body);
   assert.deepEqual(
     history.json().points.map((point: { value: number }) => point.value),
+    [28.4],
+  );
+  assert.equal(history.json().points[0].source, "simulated");
+
+  const bucketedHistory = await app.inject({
+    method: "GET",
+    url: `/v1/farms/${farmId}/telemetry/history?nodeId=NODE-ABCDEF01&metric=temperature&from=${clock - 60_000}&to=${clock + 60_000}&bucketMs=60000&limit=120`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(bucketedHistory.statusCode, 200, bucketedHistory.body);
+  assert.deepEqual(
+    bucketedHistory
+      .json()
+      .points.map((point: { value: number }) => point.value),
     [28.4],
   );
 
@@ -191,5 +275,8 @@ test("authenticated telemetry is stored, deduplicated and served to the app", as
   });
   assert.equal(staleFarm.statusCode, 200, staleFarm.body);
   assert.equal(staleFarm.json().state.snapshot.sensors[0].online, false);
-  assert.equal(staleFarm.json().state.snapshot.alerts[0].titleKey, "sensorAlert");
+  assert.equal(
+    staleFarm.json().state.snapshot.alerts[0].titleKey,
+    "sensorAlert",
+  );
 });

@@ -5,6 +5,10 @@ import type {
   Session,
   FarmResponse,
   WorkerAccount,
+  HubClaimResult,
+  HubReplacementRequest,
+  FarmDevices,
+  AdminFarmSummary,
 } from './apiTypes';
 import type { LocalAction, LocalFarmState } from './localFarmRepository';
 import type { ConnectionMode } from '../domain/types';
@@ -35,6 +39,7 @@ export interface TelemetryHistoryResponse {
     receivedAt: number;
     sequence: number;
     value: number;
+    source: 'simulated' | 'hardware';
   }[];
 }
 export function normalizeServer(value: string) {
@@ -111,6 +116,23 @@ export const api = {
   logout: (server: string, token: string) => apiRequest(server, '/v1/auth/logout', token, {}),
   farm: (server: string, token: string, farmId: string) =>
     apiRequest<FarmResponse>(server, `/v1/farms/${encodeURIComponent(farmId)}`, token),
+  devices: (server: string, token: string, farmId: string) =>
+    apiRequest<FarmDevices>(server, `/v1/farms/${encodeURIComponent(farmId)}/devices`, token),
+  addNode: (server: string, token: string, farmId: string, section: string, nodeId?: string) =>
+    apiRequest<{ hub: string; nodeId: string; section: string; source: 'simulated' }>(
+      server,
+      `/v1/farms/${encodeURIComponent(farmId)}/nodes`,
+      token,
+      { section, ...(nodeId ? { nodeId } : {}) },
+    ),
+  removeNode: (server: string, token: string, farmId: string, nodeId: string) =>
+    apiRequest<{ ok: true }>(
+      server,
+      `/v1/farms/${encodeURIComponent(farmId)}/nodes/${encodeURIComponent(nodeId)}`,
+      token,
+      undefined,
+      'DELETE',
+    ),
   telemetryHistory: (
     server: string,
     token: string,
@@ -119,10 +141,11 @@ export const api = {
     metric: string,
     from: number,
     to: number,
+    bucketMs?: number,
   ) =>
     apiRequest<TelemetryHistoryResponse>(
       server,
-      `/v1/farms/${encodeURIComponent(farmId)}/telemetry/history?nodeId=${encodeURIComponent(nodeId)}&metric=${encodeURIComponent(metric)}&from=${from}&to=${to}&limit=1000`,
+      `/v1/farms/${encodeURIComponent(farmId)}/telemetry/history?nodeId=${encodeURIComponent(nodeId)}&metric=${encodeURIComponent(metric)}&from=${from}&to=${to}&limit=240${bucketMs ? `&bucketMs=${bucketMs}` : ''}`,
       token,
     ),
   mutate: (
@@ -149,4 +172,32 @@ export const api = {
     apiRequest<WorkerAccount[]>(server, `/v1/farms/${encodeURIComponent(farmId)}/workers`, token),
   adminCreateFarm: (server: string, token: string, details: AdminFarmInput) =>
     apiRequest<AdminFarmResult>(server, '/v1/admin/farms', token, details),
+  adminFarms: (server: string, token: string) =>
+    apiRequest<{ farms: AdminFarmSummary[] }>(server, '/v1/admin/farms', token),
+  claimHub: (
+    server: string,
+    token: string,
+    farmId: string,
+    qr: string,
+    transport: 'wifi' | 'usb',
+  ) =>
+    apiRequest<HubClaimResult>(server, '/v1/hubs/claim', token, {
+      farmId,
+      qr,
+      transport,
+    }),
+  hubReplacements: (server: string, token: string) =>
+    apiRequest<{ requests: HubReplacementRequest[] }>(server, '/v1/admin/hub-replacements', token),
+  reviewHubReplacement: (
+    server: string,
+    token: string,
+    id: string,
+    decision: 'approve' | 'reject',
+  ) =>
+    apiRequest<{ status: 'approved' | 'rejected'; hubId?: string }>(
+      server,
+      `/v1/admin/hub-replacements/${encodeURIComponent(id)}/review`,
+      token,
+      { decision },
+    ),
 };

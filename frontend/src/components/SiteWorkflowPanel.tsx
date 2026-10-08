@@ -1,5 +1,6 @@
 import { View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import { Warehouse } from 'lucide-react-native';
 import {
   checklistComplete,
   commissioningChecks,
@@ -309,25 +310,40 @@ export function OwnerSiteSummary() {
   const site = data.site;
   const survey = site.survey;
   return (
-    <Card style={{ gap: 9 }}>
-      <Label weight="bold">House profile</Label>
-      <Chip tone={tone(site.status)}>{siteStatusLabel(site.status)}</Chip>
-      {survey ? (
-        <>
-          <Label>
-            {survey.farm.farmName} · {survey.farm.houseName}
-          </Label>
-          <Label>
-            {survey.house.lengthMetres} m × {survey.house.widthMetres} m · {survey.house.type}
-          </Label>
-          <Label style={{ color: colors.muted }}>
-            The CoopGuard technician maintains the survey, installation plan and commissioning
-            record.
-          </Label>
-        </>
-      ) : (
-        <Label>Waiting for a CoopGuard technician to conduct the site survey.</Label>
-      )}
+    <Card style={{ padding: 0, overflow: 'hidden' }}>
+      <View
+        style={{
+          height: 74,
+          backgroundColor: colors.greenSoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Warehouse size={42} color={colors.green} strokeWidth={1.5} />
+      </View>
+      <View style={{ padding: 17, gap: 9 }}>
+        <Label weight="bold" style={{ fontSize: 18 }}>
+          {survey?.farm.farmName ?? 'Farm profile'}
+        </Label>
+        <Label style={{ color: colors.muted, fontSize: 11 }}>House profile</Label>
+        <Chip tone={tone(site.status)}>{siteStatusLabel(site.status)}</Chip>
+        {survey ? (
+          <>
+            <Label>
+              {survey.farm.farmName} · {survey.farm.houseName}
+            </Label>
+            <Label>
+              {survey.house.lengthMetres} m × {survey.house.widthMetres} m · {survey.house.type}
+            </Label>
+            <Label style={{ color: colors.muted }}>
+              The CoopGuard technician maintains the survey, installation plan and commissioning
+              record.
+            </Label>
+          </>
+        ) : (
+          <Label>Waiting for a CoopGuard technician to conduct the site survey.</Label>
+        )}
+      </View>
     </Card>
   );
 }

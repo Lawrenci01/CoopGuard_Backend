@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { View } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { QrCode } from 'lucide-react-native';
+import { QrCode, Usb, Wifi } from 'lucide-react-native';
 import { useAuth } from '../state/AuthProvider';
 import { useFarm } from '../state/FarmProvider';
 import { AuthField, PasswordForm } from '../screens/LoginScreen';
@@ -9,6 +8,7 @@ import { Button, Label, Sheet } from './ui';
 import { en, relativeTime } from '../i18n/en';
 import { colors } from '../theme';
 import { parseFarmQr } from '../domain/deviceSimulation';
+import { QrScannerScreen } from './QrScannerScreen';
 
 export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const auth = useAuth(),
@@ -19,7 +19,8 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
     [hubAddress, setHubAddress] = useState(auth.hubServer ?? 'https://coopguard-hub.local:8443'),
     [farmCode, setFarmCode] = useState(''),
     [scanFarm, setScanFarm] = useState(false),
-    [cameraPermission, requestCameraPermission] = useCameraPermissions(),
+    [scanHub, setScanHub] = useState(false),
+    [hubTransport, setHubTransport] = useState<'wifi' | 'usb'>('wifi'),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const r = auth.record!;
@@ -36,6 +37,7 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
         setConfirmImport(false);
         setHubSetup(false);
         setScanFarm(false);
+        setScanHub(false);
         setError('');
         onClose();
       }}
@@ -82,32 +84,21 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
               <Button icon={QrCode} variant="ghost" onPress={() => setScanFarm(true)}>
                 Scan Farm QR
               </Button>
-              {scanFarm && (
-                <View style={{ gap: 10 }}>
-                  {!cameraPermission?.granted ? (
-                    <Button onPress={() => void requestCameraPermission()}>Allow camera</Button>
-                  ) : (
-                    <View style={{ height: 300, borderRadius: 18, overflow: 'hidden' }}>
-                      <CameraView
-                        style={{ flex: 1 }}
-                        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                        onBarcodeScanned={async ({ data }) => {
-                          setScanFarm(false);
-                          try {
-                            setError('');
-                            await openFarm(parseFarmQr(data));
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : 'Could not open this farm.');
-                          }
-                        }}
-                      />
-                    </View>
-                  )}
-                  <Button variant="ghost" onPress={() => setScanFarm(false)}>
-                    Cancel scan
-                  </Button>
-                </View>
-              )}
+              <QrScannerScreen
+                visible={scanFarm}
+                title="Scan Farm QR"
+                instruction="Align the farm setup QR inside the frame."
+                onClose={() => setScanFarm(false)}
+                onScanned={async (data) => {
+                  setScanFarm(false);
+                  try {
+                    setError('');
+                    await openFarm(parseFarmQr(data));
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Could not open this farm.');
+                  }
+                }}
+              />
               <Label style={{ color: colors.muted, fontSize: 12 }}>
                 A Farm ID selects a registered farm. The signed-in technician role authorizes
                 access.
@@ -158,6 +149,58 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
               </Button>
               {hubSetup && (
                 <View style={{ gap: 12 }}>
+                  <Label weight="bold">Choose how this phone reaches the laptop hub</Label>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <Button
+                      compact
+                      icon={Wifi}
+                      variant={hubTransport === 'wifi' ? 'primary' : 'secondary'}
+                      onPress={() => setHubTransport('wifi')}
+                    >
+                      Local WiFi
+                    </Button>
+                    <Button
+                      compact
+                      icon={Usb}
+                      variant={hubTransport === 'usb' ? 'primary' : 'secondary'}
+                      onPress={() => setHubTransport('usb')}
+                    >
+                      USB cable
+                    </Button>
+                  </View>
+                  <Button icon={QrCode} onPress={() => setScanHub(true)}>
+                    Scan laptop hub QR
+                  </Button>
+                  <QrScannerScreen
+                    visible={scanHub}
+                    title="Scan Laptop Hub QR"
+                    instruction="Keep the pairing QR inside the frame. The selected farm will own this hub."
+                    onClose={() => setScanHub(false)}
+                    onScanned={async (data) => {
+                      setScanHub(false);
+                      setBusy(true);
+                      setError('');
+                      try {
+                        const status = await auth.pairHub(data, hubTransport);
+                        if (status === 'replacement_pending')
+                          setError(
+                            'Replacement requested. An administrator must approve it before this hub becomes active.',
+                          );
+                        else setHubSetup(false);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : 'Could not register this hub.');
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  />
+                  <Label style={{ fontSize: 12, color: colors.muted }}>
+                    WiFi uses the laptop's local network address. USB uses ADB reverse and is useful
+                    during setup when local WiFi is unavailable.
+                  </Label>
+                  <Label weight="medium" style={{ fontSize: 12 }}>
+                    Manual address fallback
+                  </Label>
                   <AuthField
                     label="Farm hub HTTPS address"
                     value={hubAddress}
@@ -174,7 +217,7 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
                       setBusy(true);
                       setError('');
                       try {
-                        await auth.pairHub(hubAddress);
+                        await auth.pairHub(hubAddress, hubTransport);
                         setHubSetup(false);
                       } catch (e) {
                         setError(e instanceof Error ? e.message : 'Could not pair the farm hub.');
@@ -213,8 +256,8 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
           )}
           <Label style={{ fontSize: 12, color: colors.muted }}>
             The same account is used by the cloud and the paired farm hub.
-            {farm.readingSource === 'telemetry'
-              ? ' Live history comes from the gateway. Equipment responses remain samples.'
+            {farm.readingSource !== 'sample'
+              ? ` Stored ${farm.readingSource} history comes from the gateway. Equipment responses remain samples.`
               : ' Sensor readings and equipment responses are still samples.'}
           </Label>
           <Button variant="ghost" onPress={() => setPassword(true)}>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,9 +10,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
-import { Building2, LogOut, QrCode, Share2, UserRoundPlus } from 'lucide-react-native';
+import { Building2, LogOut, QrCode, RefreshCw, Share2, UserRoundPlus } from 'lucide-react-native';
 import { Button, Card, Chip, Label } from '../components/ui';
-import type { AdminFarmInput, AdminFarmResult } from '../services/apiTypes';
+import { BrandLockup } from '../components/Brand';
+import type {
+  AdminFarmInput,
+  AdminFarmResult,
+  AdminFarmSummary,
+  HubReplacementRequest,
+} from '../services/apiTypes';
 import { api } from '../services/api';
 import { useAuth } from '../state/AuthProvider';
 import { colors, fonts } from '../theme';
@@ -73,6 +79,49 @@ export function AdminScreen() {
   const [created, setCreated] = useState<AdminFarmResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [replacements, setReplacements] = useState<HubReplacementRequest[]>([]);
+  const [farms, setFarms] = useState<AdminFarmSummary[]>([]);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+
+  const loadReplacements = async () => {
+    if (!auth.record || !auth.online) return;
+    try {
+      const result = await api.hubReplacements(auth.server, auth.record.session.token);
+      setReplacements(result.requests);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : 'Could not load hub requests.',
+      );
+    }
+  };
+  const loadFarms = async () => {
+    if (!auth.record || !auth.online) return;
+    try {
+      setFarms((await api.adminFarms(auth.server, auth.record.session.token)).farms);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not load farms.');
+    }
+  };
+  useEffect(() => {
+    void loadReplacements();
+    void loadFarms();
+  }, [auth.server, auth.online]);
+
+  const reviewReplacement = async (id: string, decision: 'approve' | 'reject') => {
+    if (!auth.record) return;
+    setReviewing(id);
+    setError('');
+    try {
+      await api.reviewHubReplacement(auth.server, auth.record.session.token, id, decision);
+      await loadReplacements();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : 'Could not review this request.',
+      );
+    } finally {
+      setReviewing(null);
+    }
+  };
 
   const update = (key: keyof AdminFarmInput, value: string) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -97,6 +146,7 @@ export function AdminScreen() {
     try {
       const result = await api.adminCreateFarm(auth.server, auth.record.session.token, details);
       setCreated(result);
+      await loadFarms();
     } catch (requestError) {
       setError(
         requestError instanceof Error ? requestError.message : 'Could not create this farm.',
@@ -132,12 +182,12 @@ export function AdminScreen() {
   };
 
   const section = (title: string, children: React.ReactNode) => (
-    <View style={{ gap: 14, paddingVertical: 18, borderTopWidth: 1, borderColor: colors.border }}>
+    <Card style={{ gap: 14 }}>
       <Label weight="bold" style={{ color: colors.ink, fontSize: 16 }}>
         {title}
       </Label>
       {children}
-    </View>
+    </Card>
   );
 
   return (
@@ -159,24 +209,128 @@ export function AdminScreen() {
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: 14,
-              paddingBottom: 22,
+              paddingBottom: 16,
+              marginBottom: 18,
+              borderBottomWidth: 1,
+              borderColor: colors.border,
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, flex: 1 }}>
-              <Building2 size={25} color={colors.green} />
-              <View style={{ flex: 1 }}>
-                <Label weight="bold" style={{ color: colors.ink, fontSize: 16 }}>
-                  Team administration
-                </Label>
-                <Label style={{ color: colors.muted, fontSize: 12 }}>
-                  {auth.record?.session.account.username}
-                </Label>
-              </View>
+              <BrandLockup subtitle="Administrator workspace" markSize={40} />
             </View>
             <Button compact variant="ghost" icon={LogOut} onPress={() => void auth.logout()}>
               Sign out
             </Button>
           </View>
+
+          <Card style={{ gap: 12, marginBottom: 18 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ flex: 1, gap: 3 }}>
+                <Label weight="bold" style={{ fontSize: 16 }}>
+                  Registered farms
+                </Label>
+                <Label style={{ color: colors.muted, fontSize: 12 }}>
+                  Persistent farm, hub, node, and latest reading records.
+                </Label>
+              </View>
+              <Button compact variant="ghost" icon={RefreshCw} onPress={() => void loadFarms()}>
+                Refresh
+              </Button>
+            </View>
+            {farms.length ? (
+              farms.map((farm) => (
+                <View
+                  key={farm.id}
+                  style={{ gap: 5, paddingTop: 10, borderTopWidth: 1, borderColor: colors.border }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Label weight="bold" style={{ flex: 1 }}>
+                      {farm.name} · {farm.code}
+                    </Label>
+                    <Chip tone={farm.hubId ? 'green' : 'amber'}>
+                      {farm.hubId ? `${farm.nodeCount} nodes` : 'No hub'}
+                    </Chip>
+                  </View>
+                  <Label style={{ color: colors.muted, fontSize: 11 }}>
+                    {farm.hubId ?? 'Hub not paired'}
+                    {farm.hubSource ? ` · ${farm.hubSource}` : ''}
+                  </Label>
+                  {farm.latest?.readings && (
+                    <Label style={{ color: colors.muted, fontSize: 11 }}>
+                      Latest · {farm.latest.readings.temperature.toFixed(1)} °C ·{' '}
+                      {farm.latest.readings.humidity.toFixed(0)}% RH ·{' '}
+                      {farm.latest.readings.ammonia.toFixed(1)} ppm NH₃ ·{' '}
+                      {farm.latest.readings.co2.toFixed(0)} ppm CO₂
+                    </Label>
+                  )}
+                </View>
+              ))
+            ) : (
+              <Label style={{ color: colors.muted, fontSize: 12 }}>No farms registered yet.</Label>
+            )}
+          </Card>
+
+          <Card style={{ gap: 12, marginBottom: 18 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ flex: 1, gap: 3 }}>
+                <Label weight="bold" style={{ fontSize: 16 }}>
+                  Hub replacement approvals
+                </Label>
+                <Label style={{ color: colors.muted, fontSize: 12 }}>
+                  A farm keeps one active hub. Approving transfers it to the newly scanned laptop.
+                </Label>
+              </View>
+              <Button
+                compact
+                variant="ghost"
+                icon={RefreshCw}
+                onPress={() => void loadReplacements()}
+              >
+                Refresh
+              </Button>
+            </View>
+            {replacements.filter((item) => item.status === 'pending').length ? (
+              replacements
+                .filter((item) => item.status === 'pending')
+                .map((item) => (
+                  <View
+                    key={item.id}
+                    style={{
+                      gap: 8,
+                      paddingTop: 10,
+                      borderTopWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <Label weight="bold">
+                      {item.farmName} · {item.farmCode}
+                    </Label>
+                    <Label style={{ color: colors.muted, fontSize: 12 }}>
+                      {item.oldHubId} → {item.newHubId} · requested by {item.requestedBy}
+                    </Label>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <Button
+                        compact
+                        disabled={reviewing === item.id}
+                        onPress={() => void reviewReplacement(item.id, 'approve')}
+                      >
+                        Approve replacement
+                      </Button>
+                      <Button
+                        compact
+                        variant="danger"
+                        disabled={reviewing === item.id}
+                        onPress={() => void reviewReplacement(item.id, 'reject')}
+                      >
+                        Reject
+                      </Button>
+                    </View>
+                  </View>
+                ))
+            ) : (
+              <Label style={{ color: colors.muted, fontSize: 12 }}>No pending replacements.</Label>
+            )}
+          </Card>
 
           {created ? (
             <View testID="admin-farm-created" style={{ gap: 18 }}>

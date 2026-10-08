@@ -20,13 +20,19 @@ export async function purgeFarmData(
       `Required technician account ${technicianUsername} was not found. Nothing was deleted.`,
     );
   const admins = await db
-    .prepare("SELECT id,username FROM users WHERE role='admin' ORDER BY username")
+    .prepare(
+      "SELECT id,username FROM users WHERE role='admin' ORDER BY username",
+    )
     .all();
   if (!admins.length)
     throw new Error("No administrator account was found. Nothing was deleted.");
   const before = {
-    farms: Number((await db.prepare("SELECT COUNT(*) count FROM farms").get())?.count ?? 0),
-    users: Number((await db.prepare("SELECT COUNT(*) count FROM users").get())?.count ?? 0),
+    farms: Number(
+      (await db.prepare("SELECT COUNT(*) count FROM farms").get())?.count ?? 0,
+    ),
+    users: Number(
+      (await db.prepare("SELECT COUNT(*) count FROM users").get())?.count ?? 0,
+    ),
   };
   await db.batch([
     { sql: "DELETE FROM sessions" },
@@ -35,6 +41,8 @@ export async function purgeFarmData(
     { sql: "DELETE FROM mutations" },
     { sql: "DELETE FROM sensor_readings" },
     { sql: "DELETE FROM telemetry_nodes" },
+    { sql: "DELETE FROM hub_replacement_requests" },
+    { sql: "DELETE FROM hub_pairings" },
     { sql: "DELETE FROM telemetry_hubs" },
     { sql: "DELETE FROM memberships" },
     { sql: "DELETE FROM farm_codes" },
@@ -47,7 +55,10 @@ export async function purgeFarmData(
   return {
     deletedFarms: before.farms,
     deletedUsers: before.users - admins.length - 1,
-    preservedUsers: [technicianUsername, ...admins.map((row) => String(row.username))],
+    preservedUsers: [
+      technicianUsername,
+      ...admins.map((row) => String(row.username)),
+    ],
   };
 }
 
