@@ -153,8 +153,14 @@ $isAdministrator = ([Security.Principal.WindowsPrincipal][Security.Principal.Win
 )
 if ($isAdministrator) {
   $ruleName = 'CoopGuard Laptop Hub HTTPS'
-  if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8443 -Profile Private | Out-Null
+  $hotspotInterface = (Get-NetIPAddress -IPAddress $hotspotIp -AddressFamily IPv4 -ErrorAction Stop).InterfaceAlias
+  $rule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+  if ($rule) {
+    $rule | Set-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -Profile Any -InterfaceAlias $hotspotInterface | Out-Null
+    $rule | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter -RemoteAddress LocalSubnet | Out-Null
+    $rule | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -Protocol TCP -LocalPort 8443 | Out-Null
+  } else {
+    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8443 -Profile Any -InterfaceAlias $hotspotInterface -RemoteAddress LocalSubnet | Out-Null
   }
 } else {
   Write-Warning 'Run this command once as Administrator if Windows Firewall blocks phone access to TCP port 8443.'
