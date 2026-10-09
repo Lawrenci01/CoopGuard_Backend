@@ -7,6 +7,10 @@ export interface LaptopHubQr {
   token: string;
   wifiUrl: string;
   usbUrl: string;
+  hotspot?: {
+    ssid: string;
+    passphrase: string;
+  };
   expiresAt: number;
 }
 
@@ -26,6 +30,13 @@ export function parseLaptopHubQr(value: string): LaptopHubQr {
     parsed.token.length < 32 ||
     typeof parsed.wifiUrl !== 'string' ||
     typeof parsed.usbUrl !== 'string' ||
+    (parsed.hotspot !== undefined &&
+      (typeof parsed.hotspot?.ssid !== 'string' ||
+        parsed.hotspot.ssid.length < 1 ||
+        parsed.hotspot.ssid.length > 32 ||
+        typeof parsed.hotspot?.passphrase !== 'string' ||
+        parsed.hotspot.passphrase.length < 8 ||
+        parsed.hotspot.passphrase.length > 63)) ||
     !Number.isFinite(parsed.expiresAt)
   )
     throw new Error('This CoopGuard laptop hub QR code is incomplete or invalid.');
@@ -38,6 +49,7 @@ export function parseLaptopHubQr(value: string): LaptopHubQr {
     token: parsed.token,
     wifiUrl: normalizeServer(parsed.wifiUrl),
     usbUrl: normalizeServer(parsed.usbUrl),
+    ...(parsed.hotspot ? { hotspot: parsed.hotspot } : {}),
     expiresAt: parsed.expiresAt!,
   };
 }

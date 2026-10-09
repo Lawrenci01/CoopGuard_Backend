@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import { api, ApiError, normalizeServer } from '../services/api';
 import type { Session } from '../services/apiTypes';
 import { hubServerFromQr } from '../domain/hubPairing';
+import { connectToHubHotspot, disconnectHubHotspot } from '../services/hubWifi';
 
 const SESSION_KEY = 'coopguard.auth.v1';
 const HUBS_KEY = 'coopguard.hubs.v1';
@@ -381,7 +382,9 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       let candidate: string;
       let pairingQr: string | null = null;
       try {
-        candidate = hubServerFromQr(value, transport).server;
+        const selected = hubServerFromQr(value, transport);
+        if (transport === 'wifi') await connectToHubHotspot(selected.qr);
+        candidate = selected.server;
         pairingQr = value;
       } catch (parseError) {
         if (value.trim().startsWith('{')) throw parseError;
@@ -419,6 +422,7 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       delete next[saved.farmId];
       await AsyncStorage.setItem(HUBS_KEY, JSON.stringify(next));
       hubs.current = next;
+      await disconnectHubHotspot();
       setHubOnline(false);
       setServer(CLOUD_SERVER);
       setActiveConnection(cloudOnline ? 'cloud' : 'offline');

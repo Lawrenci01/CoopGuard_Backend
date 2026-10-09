@@ -13,6 +13,8 @@
     "hub:create": "tsx src/createHub.ts",
     "hub:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-laptop-hub.ps1",
     "hub:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-laptop-hub.ps1",
+    "hotspot:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-laptop-hotspot.ps1",
+    "hotspot:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-laptop-hotspot.ps1 -Stop",
     "reset-data": "tsx src/purge.ts",
     "reprovision": "tsx src/reprovision.ts",
     "test": "tsx --test tests/*.test.ts",

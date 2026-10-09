@@ -206,11 +206,19 @@ then create the one-time pairing QR:
 $env:TURSO_DATABASE_URL = "libsql://your-database-your-account.turso.io"
 $secureToken = Read-Host "Turso auth token" -AsSecureString
 $env:TURSO_AUTH_TOKEN = [System.Net.NetworkCredential]::new("", $secureToken).Password
-$wifiIp = (Get-NetIPConfiguration -InterfaceAlias "Wi-Fi").IPv4Address.IPAddress
-npm run tls
-npm run hub:create -- --wifi "https://${wifiIp}:8443"
+npm run hotspot:start
+npm run hub:create
 npm run hub:start
 ```
+
+`hotspot:start` creates and starts a private Windows Mobile Hotspot named `CoopGuard-Hub-*`,
+stores its generated credentials only in `.local/hotspot-config.json`, discovers the hotspot's
+private address, and renews the server certificate for that address. The QR contains those
+credentials so Android can show its protected system WiFi join dialog and connect the app to the
+laptop network before pairing. The user must approve that Android dialog; the app cannot silently
+change WiFi. The helper also disables Windows' five-minute no-client timeout so the pairing network
+stays available while the hub is running. Run the hotspot command once from Administrator PowerShell if it warns that the local
+TCP 8443 firewall rule could not be installed.
 
 The first run requires internet and creates `.local/coopguard-hub-sync.sqlite`, a local synchronized
 replica of the Render/Turso database. The older `.local/coopguard.sqlite` standalone-development
@@ -220,12 +228,24 @@ be created accidentally. After the background hub inherits the credentials, remo
 interactive shell with `Remove-Item Env:TURSO_DATABASE_URL,Env:TURSO_AUTH_TOKEN`.
 
 The command writes the private simulator identity to `.local/hub-config.json` and a scannable SVG
-to `.local/hub-config.json.qr.svg`. On the technician interface, select Local WiFi or USB cable,
-scan the QR, and register it to the currently selected farm. A farm permits one active hub. A
-second pairing becomes a replacement request and remains inactive until an administrator approves
-it. Hub registration intentionally creates no sensor nodes: the technician adds each uniquely
+to `.local/hub-config.json.qr.svg`. On the technician interface, select Hub WiFi, scan the QR,
+approve Android's connection prompt, and register it to the currently selected farm. Running
+`npm run hub:create` again refreshes the expiring QR while preserving the same hub identity; use
+`npm run hub:create -- --new-identity` only for an intentional hardware replacement. A farm permits
+one active hub, so a genuinely different hub becomes a replacement request and remains inactive
+until an administrator approves it. Hub registration intentionally creates no sensor nodes: the technician adds each uniquely
 identified node from Device management after the hub is paired. The database is the source of
 truth for this inventory; removing a node deactivates it without deleting its history.
+
+After setup, the normal daily startup is:
+
+```powershell
+npm run hub:start
+Start-Process "https://localhost:8443/developer"
+```
+
+`hub:start` restarts the saved CoopGuard hotspot automatically. Stop the backend with
+`npm run hub:stop`; stop the laptop WiFi network separately with `npm run hotspot:stop`.
 
 For USB access, keep the cable authorized and run:
 

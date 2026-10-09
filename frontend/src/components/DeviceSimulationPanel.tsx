@@ -141,7 +141,7 @@ export function DeviceSimulationPanel() {
             <Choice
               values={['wifi', 'usb']}
               selected={transport}
-              labels={{ wifi: 'Local WiFi', usb: 'USB cable' }}
+              labels={{ wifi: 'Hub WiFi', usb: 'USB cable' }}
               onSelect={setTransport}
             />
             <Button testID="create-virtual-hub" icon={QrCode} onPress={() => setScanner(true)}>

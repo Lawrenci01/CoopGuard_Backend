@@ -14,6 +14,13 @@ const httpsUrl = z
   )
   .transform((value) => new URL(value).origin);
 
+const hotspotSchema = z
+  .object({
+    ssid: z.string().trim().min(1).max(32),
+    passphrase: z.string().min(8).max(63),
+  })
+  .strict();
+
 const hubQrSchema = z
   .object({
     type: z.literal("coopguard-hub"),
@@ -22,6 +29,7 @@ const hubQrSchema = z
     token: z.string().min(32).max(256),
     wifiUrl: httpsUrl,
     usbUrl: httpsUrl,
+    hotspot: hotspotSchema.optional(),
     expiresAt: z.number().int().positive(),
   })
   .strict();
@@ -34,6 +42,32 @@ export interface HubPrivateConfig {
   hubSecret: string;
   farmCode?: string;
   nodes: { id: string; number: string; section: Section }[];
+}
+
+type HubEndpoints = {
+  wifiUrl: string;
+  usbUrl: string;
+  hotspot?: { ssid: string; passphrase: string };
+};
+
+function pairingQr(
+  hubId: string,
+  token: string,
+  endpoints: HubEndpoints,
+  expiresAt: number,
+): HubPairingQr {
+  return {
+    type: "coopguard-hub",
+    version: 1,
+    hubId,
+    token,
+    wifiUrl: httpsUrl.parse(endpoints.wifiUrl),
+    usbUrl: httpsUrl.parse(endpoints.usbUrl),
+    ...(endpoints.hotspot
+      ? { hotspot: hotspotSchema.parse(endpoints.hotspot) }
+      : {}),
+    expiresAt,
+  };
 }
 
 export function parseHubPairingQr(value: string): HubPairingQr {
@@ -53,7 +87,7 @@ export function parseHubPairingQr(value: string): HubPairingQr {
 
 export async function createHubPairing(
   db: CoopDatabase,
-  endpoints: { wifiUrl: string; usbUrl: string },
+  endpoints: HubEndpoints,
   now = Date.now(),
   lifetimeMs = 15 * 60_000,
 ) {
@@ -61,15 +95,7 @@ export async function createHubPairing(
   const token = randomBytes(32).toString("base64url");
   const hubSecret = randomBytes(32).toString("base64url");
   const pairingId = randomUUID();
-  const qr: HubPairingQr = {
-    type: "coopguard-hub",
-    version: 1,
-    hubId,
-    token,
-    wifiUrl: httpsUrl.parse(endpoints.wifiUrl),
-    usbUrl: httpsUrl.parse(endpoints.usbUrl),
-    expiresAt: now + lifetimeMs,
-  };
+  const qr = pairingQr(hubId, token, endpoints, now + lifetimeMs);
   await db
     .prepare(
       `INSERT INTO hub_pairings(id,hub_id,token_digest,secret_digest,wifi_url,usb_url,status,expires_at,created_at)
@@ -94,6 +120,48 @@ export async function createHubPairing(
       hubSecret,
       nodes: [],
     } satisfies HubPrivateConfig,
+  };
+}
+
+export async function refreshHubPairing(
+  db: CoopDatabase,
+  config: HubPrivateConfig,
+  endpoints: HubEndpoints,
+  now = Date.now(),
+  lifetimeMs = 15 * 60_000,
+) {
+  const token = randomBytes(32).toString("base64url");
+  const qr = pairingQr(config.hubId, token, endpoints, now + lifetimeMs);
+  const pairing = await db
+    .prepare("SELECT id,status FROM hub_pairings WHERE hub_id=?")
+    .get(config.hubId);
+  if (!pairing)
+    throw new Error(
+      "This saved hub identity is missing from the synchronized database. Run hub:create with --new-identity to replace it.",
+    );
+  if (pairing.status === "replacement_pending")
+    throw new Error(
+      "This hub is awaiting administrator replacement approval. Use its current QR instead of refreshing it.",
+    );
+  await db
+    .prepare(
+      `UPDATE hub_pairings
+       SET token_digest=?,secret_digest=?,wifi_url=?,usb_url=?,status='pending',farm_id=NULL,requested_by=NULL,expires_at=?,created_at=?,claimed_at=NULL
+       WHERE hub_id=?`,
+    )
+    .run(
+      telemetrySecretDigest(token),
+      telemetrySecretDigest(config.hubSecret),
+      qr.wifiUrl,
+      qr.usbUrl,
+      qr.expiresAt,
+      now,
+      config.hubId,
+    );
+  return {
+    pairingId: String(pairing.id),
+    qr: JSON.stringify(qr),
+    config,
   };
 }
 
@@ -236,6 +304,25 @@ export async function claimHub(
   const existing = await db
     .prepare("SELECT id FROM telemetry_hubs WHERE farm_id=? AND active=1")
     .get(farmId);
+  if (existing?.id === qr.hubId) {
+    const farm = await farmPlan(db, farmId);
+    await db.batch([
+      {
+        sql: "UPDATE telemetry_hubs SET secret_digest=? WHERE id=? AND farm_id=? AND active=1",
+        args: [String(pairing.secret_digest), qr.hubId, farmId],
+      },
+      {
+        sql: "UPDATE hub_pairings SET status='claimed',farm_id=?,requested_by=?,claimed_at=? WHERE id=?",
+        args: [farmId, technicianId, now, pairing.id as string],
+      },
+    ]);
+    return {
+      status: "claimed" as const,
+      hubId: qr.hubId,
+      farmCode: farm.code,
+      nodes: [] as PlannedNode[],
+    };
+  }
   if (existing) {
     const requestId = randomUUID();
     await db.batch([

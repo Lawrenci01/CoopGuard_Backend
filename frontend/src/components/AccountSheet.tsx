@@ -157,7 +157,7 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
                       variant={hubTransport === 'wifi' ? 'primary' : 'secondary'}
                       onPress={() => setHubTransport('wifi')}
                     >
-                      Local WiFi
+                      Hub WiFi
                     </Button>
                     <Button
                       compact
@@ -195,8 +195,8 @@ export function AccountSheet({ visible, onClose }: { visible: boolean; onClose: 
                     }}
                   />
                   <Label style={{ fontSize: 12, color: colors.muted }}>
-                    WiFi uses the laptop's local network address. USB uses ADB reverse and is useful
-                    during setup when local WiFi is unavailable.
+                    Hub WiFi asks Android to join the CoopGuard hotspot stored in the QR. USB uses
+                    ADB reverse during development when wireless setup is unavailable.
                   </Label>
                   <Label weight="medium" style={{ fontSize: 12 }}>
                     Manual address fallback

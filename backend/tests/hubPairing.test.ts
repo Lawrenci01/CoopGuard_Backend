@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
 import { createFarm, openDatabase } from "../src/database";
-import { createHubPairing } from "../src/hubPairing";
+import { createHubPairing, refreshHubPairing } from "../src/hubPairing";
 import { hashPassword } from "../src/passwords";
 
 test("a laptop hub is claimed once and replacement requires admin approval", async (t) => {
@@ -36,9 +36,20 @@ test("a laptop hub is claimed once and replacement requires admin approval", asy
   ]);
   const first = await createHubPairing(
     db,
-    { wifiUrl: "https://192.168.1.10:8443", usbUrl: "https://localhost:8443" },
+    {
+      wifiUrl: "https://192.168.1.10:8443",
+      usbUrl: "https://localhost:8443",
+      hotspot: {
+        ssid: "CoopGuard-Hub-TEST01",
+        passphrase: "hub-test-passphrase",
+      },
+    },
     now,
   );
+  assert.deepEqual(JSON.parse(first.qr).hotspot, {
+    ssid: "CoopGuard-Hub-TEST01",
+    passphrase: "hub-test-passphrase",
+  });
   writeFileSync(configPath, JSON.stringify(first.config), "utf8");
   writeFileSync(`${configPath}.pairing.txt`, first.qr, "utf8");
   const app = await createApp(db, {
@@ -128,6 +139,42 @@ test("a laptop hub is claimed once and replacement requires admin approval", asy
   });
   assert.equal(replacementNode.statusCode, 200, replacementNode.body);
   assert.equal(replacementNode.json().nodeId, `${first.config.hubId}-N04`);
+
+  const refreshed = await refreshHubPairing(
+    db,
+    first.config,
+    {
+      wifiUrl: "https://192.168.137.1:8443",
+      usbUrl: "https://localhost:8443",
+      hotspot: {
+        ssid: "CoopGuard-Hub-TEST01",
+        passphrase: "hub-test-passphrase",
+      },
+    },
+    now + 1,
+  );
+  assert.equal(JSON.parse(refreshed.qr).hubId, first.config.hubId);
+  const refreshedClaim = await app.inject({
+    method: "POST",
+    url: "/v1/hubs/claim",
+    headers: { authorization: `Bearer ${technician}` },
+    payload: { qr: refreshed.qr, farmId, transport: "wifi" },
+  });
+  assert.equal(refreshedClaim.statusCode, 200, refreshedClaim.body);
+  assert.equal(refreshedClaim.json().status, "claimed");
+  assert.equal(refreshedClaim.json().server, "https://192.168.137.1:8443");
+  assert.equal(
+    Number(
+      (
+        await db
+          .prepare(
+            "SELECT COUNT(*) n FROM hub_replacement_requests WHERE status='pending'",
+          )
+          .get()
+      )?.n,
+    ),
+    0,
+  );
 
   const second = await createHubPairing(
     db,

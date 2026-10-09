@@ -27,6 +27,7 @@ import { colors, fonts } from '../theme';
 import { QrScannerScreen } from '../components/QrScannerScreen';
 import { hubServerFromQr } from '../domain/hubPairing';
 import { api } from '../services/api';
+import { connectToHubHotspot } from '../services/hubWifi';
 
 export function AuthField({
   label,
@@ -279,7 +280,7 @@ export function LoginScreen() {
                           setScannedHubId('');
                         }}
                       >
-                        Local WiFi
+                        Hub WiFi
                       </Button>
                       <Button
                         compact
@@ -299,13 +300,15 @@ export function LoginScreen() {
                     <QrScannerScreen
                       visible={scanHub}
                       title="Connect to Laptop Hub"
-                      instruction={`Scan the QR shown on the laptop. This phone will use ${hubTransport === 'wifi' ? 'local WiFi' : 'the USB cable'}.`}
+                      instruction={`Scan the QR shown on the laptop. This phone will use ${hubTransport === 'wifi' ? 'the CoopGuard hub WiFi' : 'the USB cable'}.`}
                       onClose={() => setScanHub(false)}
                       onScanned={async (data) => {
                         setScanHub(false);
                         setError('');
                         try {
                           const selected = hubServerFromQr(data, hubTransport);
+                          if (hubTransport === 'wifi')
+                            await connectToHubHotspot(selected.qr);
                           const health = await api.health(selected.server);
                           if (
                             health.service !== 'CoopGuard' ||
